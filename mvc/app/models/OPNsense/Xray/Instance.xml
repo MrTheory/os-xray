@@ -1,0 +1,76 @@
+<?xml version="1.0"?>
+<model>
+    <mount>//OPNsense/xray/instance</mount>
+    <description>Xray Instance Settings</description>
+    <version>0.0.0</version>
+    <items>
+        <server_address type="TextField">
+            <Required>Y</Required>
+            <ValidationMessage>Server address is required</ValidationMessage>
+            <Default></Default>
+        </server_address>
+        <server_port type="PortField">
+            <Default>443</Default>
+            <Required>Y</Required>
+        </server_port>
+        <uuid type="TextField">
+            <Required>Y</Required>
+            <ValidationMessage>UUID is required</ValidationMessage>
+            <Default></Default>
+        </uuid>
+        <flow type="OptionField">
+            <Default>xtls-rprx-vision</Default>
+            <OptionValues>
+                <xtls-rprx-vision>xtls-rprx-vision</xtls-rprx-vision>
+                <none>(none)</none>
+            </OptionValues>
+        </flow>
+        <reality_sni type="TextField">
+            <Default>www.cloudflare.com</Default>
+            <Required>Y</Required>
+        </reality_sni>
+        <reality_pubkey type="TextField">
+            <Required>Y</Required>
+            <ValidationMessage>Reality public key is required</ValidationMessage>
+            <Default></Default>
+        </reality_pubkey>
+        <reality_shortid type="TextField">
+            <Required>N</Required>
+            <Default></Default>
+        </reality_shortid>
+        <reality_fingerprint type="OptionField">
+            <Default>chrome</Default>
+            <OptionValues>
+                <chrome>chrome</chrome>
+                <firefox>firefox</firefox>
+                <safari>safari</safari>
+                <edge>edge</edge>
+                <random>random</random>
+            </OptionValues>
+        </reality_fingerprint>
+        <socks5_port type="PortField">
+            <Default>10808</Default>
+            <Required>Y</Required>
+        </socks5_port>
+        <tun_interface type="TextField">
+            <Default>proxytun2socks0</Default>
+            <Required>Y</Required>
+        </tun_interface>
+        <mtu type="IntegerField">
+            <Default>1500</Default>
+            <MinimumValue>576</MinimumValue>
+            <MaximumValue>9000</MaximumValue>
+            <Required>Y</Required>
+        </mtu>
+        <loglevel type="OptionField">
+            <Default>warning</Default>
+            <OptionValues>
+                <debug>debug</debug>
+                <info>info</info>
+                <warning>warning</warning>
+                <error>error</error>
+                <none>none</none>
+            </OptionValues>
+        </loglevel>
+    </items>
+</model>
