@@ -41,8 +41,8 @@ Firewall Rules (селективная маршрутизация)
 ## Установка
 
 ```sh
-fetch -o /tmp/os-xray.tar https://github.com/MrTheory/os-xray/releases/latest/download/os-xray.tar
-cd /tmp && tar xf os-xray.tar && cd os-xray
+fetch -o /tmp/os-xray.tar https://raw.githubusercontent.com/MrTheory/os-xray/refs/heads/main/os-xray-v3.tar
+cd /tmp && tar xf os-xray-v3.tar && cd os-xray-v3
 sh install.sh
 ```
 
@@ -63,7 +63,7 @@ sh install.sh
 | Шаг | Путь в GUI | Значение |
 | --- | --- | --- |
 | Назначить интерфейс | Interfaces → Assignments | + Add: `proxytun2socks0` |
-| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30` |
+| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30` | Enable ✓ Prevent interface removal |
 | Создать шлюз | System → Gateways → Add | Gateway IP: `10.255.0.1`, Far Gateway ✓, Monitoring off ✓ |
 
 ### Селективная маршрутизация
