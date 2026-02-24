@@ -63,7 +63,7 @@ sh install.sh
 | Шаг | Путь в GUI | Значение |
 | --- | --- | --- |
 | Назначить интерфейс | Interfaces → Assignments | + Add: `proxytun2socks0` |
-| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30` | Enable ✓ Prevent interface removal |
+| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30`, Enable ✓ Prevent interface removal |
 | Создать шлюз | System → Gateways → Add | Gateway IP: `10.255.0.1`, Far Gateway ✓, Monitoring off ✓ |
 
 ### Селективная маршрутизация
