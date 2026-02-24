@@ -1,0 +1,88 @@
+<form>
+    <field>
+        <type>header</type>
+        <label>Server</label>
+    </field>
+    <field>
+        <id>instance.server_address</id>
+        <label>Server Address</label>
+        <type>text</type>
+        <help>IP address or hostname of the Xray server (e.g. 1.2.3.4 or example.com)</help>
+    </field>
+    <field>
+        <id>instance.server_port</id>
+        <label>Server Port</label>
+        <type>text</type>
+        <help>Server port (default: 443)</help>
+    </field>
+    <field>
+        <id>instance.uuid</id>
+        <label>UUID</label>
+        <type>text</type>
+        <help>User UUID from the server configuration</help>
+    </field>
+    <field>
+        <id>instance.flow</id>
+        <label>Flow</label>
+        <type>dropdown</type>
+        <help>XTLS flow control. Use xtls-rprx-vision for VLESS+Reality.</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Reality Settings</label>
+    </field>
+    <field>
+        <id>instance.reality_sni</id>
+        <label>Server Name (SNI)</label>
+        <type>text</type>
+        <help>SNI used for Reality handshake (e.g. www.cloudflare.com)</help>
+    </field>
+    <field>
+        <id>instance.reality_pubkey</id>
+        <label>Public Key</label>
+        <type>text</type>
+        <help>Server Reality public key (x25519)</help>
+    </field>
+    <field>
+        <id>instance.reality_shortid</id>
+        <label>Short ID</label>
+        <type>text</type>
+        <help>Reality Short ID (optional, e.g. a1b2c3d4)</help>
+    </field>
+    <field>
+        <id>instance.reality_fingerprint</id>
+        <label>Fingerprint</label>
+        <type>dropdown</type>
+        <help>TLS client fingerprint to mimic (chrome, firefox, safari, edge, random)</help>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Tunnel (tun2socks)</label>
+    </field>
+    <field>
+        <id>instance.socks5_port</id>
+        <label>SOCKS5 Port</label>
+        <type>text</type>
+        <help>Local SOCKS5 port that xray-core listens on and tun2socks connects to (default: 10808)</help>
+    </field>
+    <field>
+        <id>instance.tun_interface</id>
+        <label>TUN Interface</label>
+        <type>text</type>
+        <help>TUN device name created by tun2socks (default: proxytun2socks0). Must match Interfaces → Assignments.</help>
+    </field>
+    <field>
+        <id>instance.mtu</id>
+        <label>MTU</label>
+        <type>text</type>
+        <help>MTU for the TUN interface (default: 1500). Reduce to 1380 if large packets fail.</help>
+    </field>
+    <field>
+        <id>instance.loglevel</id>
+        <label>Xray Log Level</label>
+        <type>dropdown</type>
+        <help>Verbosity of xray-core logs (warning recommended for production)</help>
+    </field>
+</form>
