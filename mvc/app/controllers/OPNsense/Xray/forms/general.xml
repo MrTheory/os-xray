@@ -1,8 +1,0 @@
-<form>
-    <field>
-        <id>general.enabled</id>
-        <label>Enable Xray</label>
-        <type>checkbox</type>
-        <help>Enable the Xray-core VLESS+Reality VPN service (xray-core + tun2socks)</help>
-    </field>
-</form>

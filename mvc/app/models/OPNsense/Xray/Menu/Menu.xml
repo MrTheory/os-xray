@@ -1,7 +1,0 @@
-<menu>
-    <VPN>
-        <Xray cssClass="fa fa-rocket fa-fw">
-            <General order="10" url="/ui/xray/"/>
-        </Xray>
-    </VPN>
-</menu>
