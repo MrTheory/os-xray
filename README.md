@@ -14,6 +14,9 @@ Xray-core с протоколом VLESS+Reality + tun2socks — нативный
 - При установке автоматически определяет и импортирует существующий конфиг xray-core и tun2socks
 - Совместимость с селективной маршрутизацией OPNsense (Firewall Aliases + Rules + Gateway)
 - Статус сервисов xray-core и tun2socks отображается прямо в GUI
+- **Автозапуск после ребута** — интерфейс поднимается автоматически, нажимать Apply вручную не нужно
+
+---
 
 ## Стек
 
@@ -27,14 +30,16 @@ OPNsense Gateway PROXYTUN_GW
 Firewall Rules (селективная маршрутизация)
 ```
 
+---
+
 ## Системные требования
 
-| Компонент | Версия |
-| --- | --- |
-| OPNsense | 25.x |
-| FreeBSD | 14.3-RELEASE amd64 |
-| xray-core | Любая актуальная |
-| tun2socks | Любая актуальная |
+| Компонент  | Версия                  |
+|------------|-------------------------|
+| OPNsense   | 25.x / 26.x             |
+| FreeBSD    | 14.x amd64              |
+| xray-core  | Любая актуальная        |
+| tun2socks  | Любая актуальная        |
 
 ---
 
@@ -47,38 +52,62 @@ sh install.sh
 ```
 
 Скрипт автоматически:
-- Проверит наличие бинарников `xray-core` и `tun2socks` — если их нет, выведет ссылки для скачивания
+
+- Проверит наличие бинарников xray-core и tun2socks — если их нет, выведет ссылки для скачивания
 - Найдёт существующие конфиги и импортирует их в OPNsense (поля в GUI заполнятся сразу)
 - Скопирует все файлы плагина, перезапустит configd, очистит кеши
+- Установит boot-скрипт для автозапуска после ребута
 
-### Настройка в GUI
+---
 
-1. Обнови браузер **(Ctrl+F5)** → **VPN → Xray**
-2. Вкладка **Instance** → кнопка **Import VLESS link** → вставь ссылку → **Parse & Fill**
-3. Вкладка **General** → установи галку **Enable Xray**
-4. Нажми **Apply**
+## Настройка в GUI
 
-### Интерфейс и шлюз
+Обнови браузер (`Ctrl+F5`) → **VPN → Xray**
+
+1. Вкладка **Instance** → кнопка **Import VLESS link** → вставь ссылку → **Parse & Fill**
+2. Вкладка **General** → установи галку **Enable Xray**
+3. Нажми **Apply**
+
+---
+
+## Интерфейс и шлюз
 
 | Шаг | Путь в GUI | Значение |
-| --- | --- | --- |
-| Назначить интерфейс | Interfaces → Assignments | + Add: `proxytun2socks0` |
-| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30`, Enable ✓ Prevent interface removal |
-| Создать шлюз | System → Gateways → Add | Gateway IP: `10.255.0.1`, Far Gateway ✓, Monitoring off ✓ |
+|-----|-----------|----------|
+| Назначить интерфейс | Interfaces → Assignments | + Add: proxytun2socks0 |
+| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30` |
+| **Предотвратить удаление** | Interfaces → \<имя\> | **Prevent interface removal ✓** |
+| Создать шлюз | System → Gateways → Add | Gateway IP: `10.255.0.2`, Far Gateway ✓, Monitoring off ✓ |
 
-### Селективная маршрутизация
+> **Важно:** галочка **Prevent interface removal** обязательна — без неё OPNsense может удалить интерфейс из конфига при ребуте, если tun2socks ещё не успел его создать.
+
+---
+
+## Селективная маршрутизация
 
 - **Firewall → Aliases** — создай список IP/сетей/доменов для маршрутизации через VPN
 - **Firewall → Rules → LAN** — добавь правило: Source = LAN net, Destination = alias, Gateway = PROXYTUN_GW
 
-> MSS Clamping для Xray не требуется (в отличие от WireGuard).
+MSS Clamping для Xray не требуется (в отличие от WireGuard).
+
+---
+
+## Автозапуск после ребута
+
+После ребута интерфейс `proxytun2socks0` поднимается автоматически — xray и tun2socks стартуют, интерфейс получает IP, firewall rules перезагружаются. Вручную нажимать Apply не нужно.
+
+Работает через два механизма:
+- **`xray_configure_do()`** — boot hook (приоритет 10), запускает процессы на раннем этапе загрузки
+- **`/usr/local/etc/rc.syshook.d/start/50-xray`** — финальный скрипт, поднимает интерфейс и применяет routing/firewall когда OPNsense полностью загружен
+
+Лог последнего запуска: `cat /tmp/xray_syshook.log`
 
 ---
 
 ## Удаление
 
 ```sh
-cd /tmp/os-xray
+cd /tmp/os-xray-v3
 sh install.sh uninstall
 ```
 
@@ -98,12 +127,17 @@ rm -f /var/lib/php/tmp/opnsense_menu_cache.xml
 # {"status":"ok","xray_core":"running","tun2socks":"running"}
 ```
 
+**Проверить лог boot-скрипта**
+```sh
+cat /tmp/xray_syshook.log
+```
+
 **Просмотреть лог ошибок**
 ```sh
 cat /var/lib/php/tmp/PHP_errors.log | tail -30
 ```
 
-**Конфиги генерируются при нажатии Apply:**
+Конфиги генерируются при нажатии Apply:
 ```
 /usr/local/etc/xray-core/config.json
 /usr/local/tun2socks/config.yaml
@@ -117,17 +151,20 @@ cat /var/lib/php/tmp/PHP_errors.log | tail -30
 os-xray/
 ├── install.sh
 └── plugin/
-    ├── etc/inc/plugins.inc.d/
-    │   └── xray.inc                        ← регистрация сервиса в OPNsense
+    ├── etc/
+    │   ├── inc/plugins.inc.d/
+    │   │   └── xray.inc                        ← регистрация сервиса, boot hook
+    │   └── rc.syshook.d/start/
+    │       └── 50-xray                         ← автозапуск после ребута
     ├── scripts/Xray/
-    │   └── xray-service-control.php        ← управление xray-core и tun2socks
+    │   └── xray-service-control.php            ← управление xray-core и tun2socks
     ├── service/conf/actions.d/
-    │   └── actions_xray.conf               ← configd actions
+    │   └── actions_xray.conf                   ← configd actions
     └── mvc/app/
         ├── models/OPNsense/Xray/
-        │   ├── General.xml / General.php   ← модель: enable/disable
-        │   ├── Instance.xml / Instance.php ← модель: параметры подключения
-        │   └── Menu/Menu.xml               ← пункт меню VPN → Xray
+        │   ├── General.xml / General.php       ← модель: enable/disable
+        │   ├── Instance.xml / Instance.php     ← модель: параметры подключения
+        │   └── Menu/Menu.xml                   ← пункт меню VPN → Xray
         ├── controllers/OPNsense/Xray/
         │   ├── IndexController.php
         │   ├── forms/general.xml
@@ -136,7 +173,7 @@ os-xray/
         │       ├── GeneralController.php
         │       ├── InstanceController.php
         │       ├── ServiceController.php
-        │       └── ImportController.php    ← парсинг VLESS ссылки
+        │       └── ImportController.php        ← парсинг VLESS ссылки
         └── views/OPNsense/Xray/
             └── general.volt
 ```
@@ -145,7 +182,7 @@ os-xray/
 
 ## Если бинарники ещё не установлены
 
-Скрипт установки сам сообщит об отсутствии бинарников. Ниже — команды для их ручной установки.
+Скрипт установки сам сообщит об отсутствии бинарников. Ниже — команды для ручной установки.
 
 **xray-core** — [github.com/XTLS/Xray-core/releases](https://github.com/XTLS/Xray-core/releases)
 ```sh
@@ -175,7 +212,6 @@ Copyright (c) 2026 Merkulov Pavel Sergeevich (Меркулов Павел Сер
 Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
 
 1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-
 2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
 
 THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
@@ -184,7 +220,7 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 
 ## Автор
 
-**Меркулов Павел Сергеевич**  
+Меркулов Павел Сергеевич  
 Февраль 2026
 
 ---
