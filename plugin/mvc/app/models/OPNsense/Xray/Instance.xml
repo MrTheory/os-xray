@@ -1,0 +1,87 @@
+<?xml version="1.0"?>
+<model>
+    <mount>//OPNsense/xray/instance</mount>
+    <description>Xray Instance Settings</description>
+    <version>1.0.1</version>
+    <items>
+        <!-- v1.0.0: добавлена валидация UUID (Mask) и server_address (Mask) -->
+        <!-- v1.0.1: исправлен loglevel — тег-ключ <e> заменён на <loglevel_error>,
+             теперь в config.xml сохраняется "loglevel_error", xray-service-control.php
+             нормализует его в "error". Workaround ($v==='e') расширен для обратной совместимости:
+             оба значения ("e" и "loglevel_error") маппятся в "error". -->
+        <server_address type="TextField">
+            <Required>Y</Required>
+            <Mask>/^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$|^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$/</Mask>
+            <ValidationMessage>Server address must be a valid hostname or IPv4 address (no spaces, no special characters)</ValidationMessage>
+            <Default></Default>
+        </server_address>
+        <server_port type="PortField">
+            <Default>443</Default>
+            <Required>Y</Required>
+        </server_port>
+        <uuid type="TextField">
+            <Required>Y</Required>
+            <Mask>/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$/</Mask>
+            <ValidationMessage>UUID must be a valid UUID (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)</ValidationMessage>
+            <Default></Default>
+        </uuid>
+        <flow type="OptionField">
+            <Default>xtls-rprx-vision</Default>
+            <OptionValues>
+                <xtls-rprx-vision>xtls-rprx-vision</xtls-rprx-vision>
+                <none>(none)</none>
+            </OptionValues>
+        </flow>
+        <reality_sni type="TextField">
+            <Default>www.cloudflare.com</Default>
+            <Required>Y</Required>
+        </reality_sni>
+        <reality_pubkey type="TextField">
+            <Required>Y</Required>
+            <ValidationMessage>Reality public key is required</ValidationMessage>
+            <Default></Default>
+        </reality_pubkey>
+        <reality_shortid type="TextField">
+            <Required>N</Required>
+            <Default></Default>
+        </reality_shortid>
+        <reality_fingerprint type="OptionField">
+            <Default>chrome</Default>
+            <OptionValues>
+                <chrome>chrome</chrome>
+                <firefox>firefox</firefox>
+                <safari>safari</safari>
+                <edge>edge</edge>
+                <random>random</random>
+            </OptionValues>
+        </reality_fingerprint>
+        <socks5_port type="PortField">
+            <Default>10808</Default>
+            <Required>Y</Required>
+        </socks5_port>
+        <tun_interface type="TextField">
+            <Default>proxytun2socks0</Default>
+            <Required>Y</Required>
+        </tun_interface>
+        <mtu type="IntegerField">
+            <Default>1500</Default>
+            <MinimumValue>576</MinimumValue>
+            <MaximumValue>9000</MaximumValue>
+            <Required>Y</Required>
+        </mtu>
+        <!-- OptionField: имя тега = ключ, сохраняемый в config.xml; текст тега = label в GUI.
+             "error" не может быть именем XML-тега в PhalconMVC OptionField (зарезервировано).
+             Используем <loglevel_error> как ключ; нормализацию делаем в xray-service-control.php.
+             Для обратной совместимости со старым ключом "e" — маппинг оставлен в PHP. -->
+        <loglevel type="OptionField">
+            <Default>warning</Default>
+            <OptionValues>
+                <debug>debug</debug>
+                <info>info</info>
+                <warning>warning</warning>
+                <loglevel_error>error</loglevel_error>
+                <none>none</none>
+            </OptionValues>
+        </loglevel>
+    </items>
+</model>

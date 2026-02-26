@@ -1,0 +1,38 @@
+<?xml version="1.0"?>
+<acl>
+    <acl_xray_general>
+        <n>Xray: General settings</n>
+        <description>Allow access to Xray general configuration (enable/disable)</description>
+        <patterns>
+            <pattern>api/xray/general/*</pattern>
+        </patterns>
+    </acl_xray_general>
+    <acl_xray_instance>
+        <n>Xray: Instance settings</n>
+        <description>Allow access to Xray connection parameters (server, UUID, Reality keys)</description>
+        <patterns>
+            <pattern>api/xray/instance/*</pattern>
+        </patterns>
+    </acl_xray_instance>
+    <acl_xray_service>
+        <n>Xray: Service control</n>
+        <description>Allow access to Xray service control (start, stop, reconfigure, status)</description>
+        <patterns>
+            <pattern>api/xray/service/*</pattern>
+        </patterns>
+    </acl_xray_service>
+    <acl_xray_import>
+        <n>Xray: Import VLESS link</n>
+        <description>Allow access to VLESS link parser (import/parse)</description>
+        <patterns>
+            <pattern>api/xray/import/*</pattern>
+        </patterns>
+    </acl_xray_import>
+    <acl_xray_ui>
+        <n>Xray: Web UI</n>
+        <description>Allow access to the Xray management page (VPN → Xray)</description>
+        <patterns>
+            <pattern>ui/xray/*</pattern>
+        </patterns>
+    </acl_xray_ui>
+</acl>

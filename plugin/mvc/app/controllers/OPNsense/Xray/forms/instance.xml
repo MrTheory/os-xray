@@ -1,0 +1,100 @@
+<form>
+    <field>
+        <type>header</type>
+        <label>Server</label>
+    </field>
+    <field>
+        <id>instance.server_address</id>
+        <label>Server Address</label>
+        <type>text</type>
+        <help>IP address or hostname of the VLESS+Reality server</help>
+        <hint>e.g. 1.2.3.4 or vpn.example.com</hint>
+    </field>
+    <field>
+        <id>instance.server_port</id>
+        <label>Server Port</label>
+        <type>text</type>
+        <help>TCP port the server listens on</help>
+        <hint>Default: 443 (recommended for Reality)</hint>
+    </field>
+    <field>
+        <id>instance.uuid</id>
+        <label>UUID</label>
+        <type>text</type>
+        <help>User UUID configured on the server</help>
+        <hint>Format: xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx</hint>
+    </field>
+    <field>
+        <id>instance.flow</id>
+        <label>Flow</label>
+        <type>dropdown</type>
+        <help>XTLS flow control mode</help>
+        <hint>Use xtls-rprx-vision for VLESS+Reality (required for UDP performance)</hint>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Reality Settings</label>
+    </field>
+    <field>
+        <id>instance.reality_sni</id>
+        <label>Server Name (SNI)</label>
+        <type>text</type>
+        <help>Domain used for TLS handshake camouflage</help>
+        <hint>Must match a domain the server is configured to impersonate, e.g. www.cloudflare.com</hint>
+    </field>
+    <field>
+        <id>instance.reality_pubkey</id>
+        <label>Public Key</label>
+        <type>text</type>
+        <help>Server x25519 public key for Reality handshake verification</help>
+        <hint>Base64url string, provided by the server admin. Without this key the handshake fails.</hint>
+    </field>
+    <field>
+        <id>instance.reality_shortid</id>
+        <label>Short ID</label>
+        <type>text</type>
+        <help>Optional hex string that helps the server route connections</help>
+        <hint>Leave empty if the server does not require it. Format: up to 16 hex chars (e.g. a1b2c3d4)</hint>
+    </field>
+    <field>
+        <id>instance.reality_fingerprint</id>
+        <label>Fingerprint</label>
+        <type>dropdown</type>
+        <help>TLS ClientHello fingerprint to impersonate</help>
+        <hint>chrome or firefox are safest choices. random picks one each connection.</hint>
+    </field>
+
+    <field>
+        <type>header</type>
+        <label>Tunnel (tun2socks)</label>
+    </field>
+    <field>
+        <id>instance.socks5_port</id>
+        <label>SOCKS5 Port</label>
+        <type>text</type>
+        <help>Local loopback port xray-core binds for SOCKS5 inbound</help>
+        <hint>Default: 10808. tun2socks connects here to forward TUN traffic. Must not be used by another process.</hint>
+    </field>
+    <field>
+        <id>instance.tun_interface</id>
+        <label>TUN Interface</label>
+        <type>text</type>
+        <help>Virtual network interface created by tun2socks</help>
+        <hint>Default: proxytun2socks0. Must match the name in Interfaces → Assignments.</hint>
+    </field>
+    <field>
+        <id>instance.mtu</id>
+        <label>MTU</label>
+        <type>text</type>
+        <help>Maximum Transmission Unit for the TUN interface</help>
+        <hint>Default: 1500. Reduce to 1380 if large packets (e.g. SSH, large downloads) fail or are slow.</hint>
+    </field>
+    <field>
+        <id>instance.loglevel</id>
+        <label>Xray Log Level</label>
+        <type>dropdown</type>
+        <help>Verbosity of xray-core internal logs</help>
+        <hint>warning is recommended for production. Use debug only for troubleshooting — it generates a lot of output.</hint>
+    </field>
+</form>
