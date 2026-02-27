@@ -10,11 +10,11 @@ permissions:
 
 jobs:
   release:
-    name: Create Release with Archive
+    name: Triggered by New Tag event
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout repository
+      - name: Checkout repository and create archive
         uses: actions/checkout@v4
 
       - name: Get version from tag
@@ -40,11 +40,12 @@ jobs:
 
           echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
 
-      - name: Generate changelog (commits since previous tag)
+      - name: Generate changelog to release message
         id: changelog
         run: |
-          # Находим предыдущий тег (если есть)
           PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          TAG="${GITHUB_REF#refs/tags/}"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ARCHIVE_DIR}.tar.gz"
 
           {
             echo "BODY<<EOF"
@@ -57,13 +58,18 @@ jobs:
               echo ""
               git log --pretty=format:"- %s (%h)" --no-merges
             fi
+
             echo ""
             echo ""
             echo "---"
             echo "### Manual installation"
-            echo "1. Download the archive (\`.tar.gz\` or \`.zip\`) below"
-            echo "2. Extract it"
-            echo "3. Run \`chmod +x install.sh && sudo ./install.sh\`"
+            echo '```sh'
+            echo "fetch -o /tmp/os-xray.tar.gz ${DOWNLOAD_URL}"
+            echo "cd /tmp && tar xzf os-xray.tar.gz"
+            echo "cd ${ARCHIVE_DIR}"
+            echo "chmod +x install.sh && sh install.sh"
+            echo '```'
+
             echo "EOF"
           } >> "$GITHUB_OUTPUT"
 
