@@ -1,0 +1,82 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Create Release with Archive
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release archive
+        run: |
+          ARCHIVE_DIR="os-xray-${{ steps.version.outputs.VERSION }}"
+          mkdir -p "${ARCHIVE_DIR}"
+
+          # Копируем все файлы, необходимые для ручной установки.
+          # Исключаем служебные каталоги (.git, .github) и сам каталог архива.
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude="${ARCHIVE_DIR}" \
+            . "${ARCHIVE_DIR}/"
+
+          # Создаём .tar.gz и .zip архивы
+          tar -czf "${ARCHIVE_DIR}.tar.gz" "${ARCHIVE_DIR}"
+          zip -r   "${ARCHIVE_DIR}.zip"    "${ARCHIVE_DIR}"
+
+          echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
+
+      - name: Generate changelog (commits since previous tag)
+        id: changelog
+        run: |
+          # Находим предыдущий тег (если есть)
+          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+
+          {
+            echo "BODY<<EOF"
+            if [ -n "${PREV_TAG}" ]; then
+              echo "## Changes since ${PREV_TAG}"
+              echo ""
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+            else
+              echo "## Initial release 🎉"
+              echo ""
+              git log --pretty=format:"- %s (%h)" --no-merges
+            fi
+            echo ""
+            echo ""
+            echo "---"
+            echo "### Manual installation"
+            echo "1. Download the archive (\`.tar.gz\` or \`.zip\`) below"
+            echo "2. Extract it"
+            echo "3. Run \`chmod +x install.sh && sudo ./install.sh\`"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "os-xray ${{ steps.version.outputs.VERSION }}"
+          body: ${{ steps.changelog.outputs.BODY }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-rc') || contains(steps.version.outputs.VERSION, '-beta') || contains(steps.version.outputs.VERSION, '-alpha') }}
+          files: |
+            ${{ env.ARCHIVE_DIR }}.tar.gz
+            ${{ env.ARCHIVE_DIR }}.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
