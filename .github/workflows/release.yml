@@ -25,7 +25,7 @@ jobs:
 
       - name: Prepare release archive
         run: |
-          ARCHIVE_DIR="os-xray-${{ steps.version.outputs.VERSION }}"
+          ARCHIVE_NAME="opnsense-xray-${{ steps.version.outputs.VERSION }}"
           mkdir -p "${ARCHIVE_DIR}"
 
           # Копируем все файлы, необходимые для ручной установки.
@@ -40,6 +40,7 @@ jobs:
           tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_DIR}"
 
           echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
 
       #- name: Debug git info
       #  run: |
@@ -54,7 +55,7 @@ jobs:
         run: |
           PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
           TAG="${GITHUB_REF#refs/tags/}"
-          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ARCHIVE_DIR}.tar.gz"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ARCHIVE_NAME}.tar.gz"
 
           {
             echo "BODY<<EOF"
