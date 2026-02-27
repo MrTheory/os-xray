@@ -42,13 +42,13 @@ jobs:
 
           echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
 
-      - name: Debug git info
-        run: |
-          echo "=== All tags ==="
-          git tag --sort=-v:refname
-          echo ""
-          echo "=== Commit count ==="
-          git rev-list --count HEAD
+      #- name: Debug git info
+      #  run: |
+      #    echo "=== All tags ==="
+      #    git tag --sort=-v:refname
+      #    echo ""
+      #    echo "=== Commit count ==="
+      #    git rev-list --count HEAD
 
       - name: Generate changelog to release message
         id: changelog
