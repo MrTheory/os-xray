@@ -16,6 +16,8 @@ jobs:
     steps:
       - name: Checkout repository and create archive
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Get version from tag
         id: version
