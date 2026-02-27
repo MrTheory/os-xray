@@ -63,7 +63,7 @@ jobs:
             if [ -n "${PREV_TAG}" ]; then
               echo "## Changes since ${PREV_TAG}"
               echo ""
-              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges --reverse
             else
               echo "## Initial release 🎉"
               echo ""
