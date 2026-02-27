@@ -36,9 +36,8 @@ jobs:
             --exclude="${ARCHIVE_DIR}" \
             . "${ARCHIVE_DIR}/"
 
-          # Создаём .tar.gz и .zip архивы
-          tar -czf "${ARCHIVE_DIR}.tar.gz" "${ARCHIVE_DIR}"
-          zip -r   "${ARCHIVE_DIR}.zip"    "${ARCHIVE_DIR}"
+          # Создаём .tar.gz архив
+          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_DIR}"
 
           echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
 
@@ -92,7 +91,6 @@ jobs:
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-rc') || contains(steps.version.outputs.VERSION, '-beta') || contains(steps.version.outputs.VERSION, '-alpha') }}
           files: |
-            ${{ env.ARCHIVE_DIR }}.tar.gz
-            ${{ env.ARCHIVE_DIR }}.zip
+            ${{ env.ARCHIVE_NAME }}.tar.gz
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
