@@ -25,6 +25,7 @@ jobs:
 
       - name: Prepare release archive
         run: |
+          ARCHIVE_DIR="opnsense-xray"
           ARCHIVE_NAME="opnsense-xray-${{ steps.version.outputs.VERSION }}"
           mkdir -p "${ARCHIVE_DIR}"
 
@@ -74,9 +75,9 @@ jobs:
             echo "---"
             echo "### Manual installation"
             echo '```sh'
-            echo "fetch -o /tmp/os-xray.tar.gz ${DOWNLOAD_URL}"
-            echo "cd /tmp && tar xzf os-xray.tar.gz"
-            echo "cd os-xray"
+            echo "fetch -o /tmp/opnsense-xray.tar.gz ${DOWNLOAD_URL}"
+            echo "cd /tmp && tar xzf opnsense-xray.tar.gz"
+            echo "cd opnsense-xray"
             echo "chmod +x install.sh && sh install.sh"
             echo '```'
 
@@ -87,7 +88,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.VERSION }}
-          name: "os-xray ${{ steps.version.outputs.VERSION }}"
+          name: "opnsense-xray ${{ steps.version.outputs.VERSION }}"
           body: ${{ steps.changelog.outputs.BODY }}
           draft: false
           prerelease: ${{ contains(steps.version.outputs.VERSION, '-rc') || contains(steps.version.outputs.VERSION, '-beta') || contains(steps.version.outputs.VERSION, '-alpha') }}
