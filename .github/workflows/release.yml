@@ -11,7 +11,7 @@ permissions:
 jobs:
   release:
     name: Triggered by New Tag event
-    runs-on: ubuntu-latest
+    runs-on: self-hosted  #ubuntu-latest
 
     steps:
       - name: Checkout repository and create archive
