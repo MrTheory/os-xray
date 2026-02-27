@@ -49,7 +49,7 @@ Firewall Rules (селективная маршрутизация)
 ## Установка
 
 ```sh
-fetch -o /tmp/os-xray-v3.tar https://raw.githubusercontent.com/MrTheory/os-xray/refs/heads/main/os-xray-v3.tar
+fetch -o /tmp/os-xray-v3.tar https://raw.githubusercontent.com/MrTheory/os-xray/refs/heads/main/os-xray-v4.tar
 cd /tmp && tar xf os-xray-v4.tar
 sh install.sh
 ```
