@@ -66,7 +66,7 @@ jobs:
             echo '```sh'
             echo "fetch -o /tmp/os-xray.tar.gz ${DOWNLOAD_URL}"
             echo "cd /tmp && tar xzf os-xray.tar.gz"
-            echo "cd ${ARCHIVE_DIR}"
+            echo "cd os-xray"
             echo "chmod +x install.sh && sh install.sh"
             echo '```'
 
