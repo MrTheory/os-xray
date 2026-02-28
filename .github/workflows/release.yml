@@ -1,0 +1,98 @@
+name: Build and Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Triggered by New Tag event
+    runs-on: self-hosted  #ubuntu-latest
+
+    steps:
+      - name: Checkout repository and create archive
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get version from tag
+        id: version
+        run: echo "VERSION=${GITHUB_REF#refs/tags/}" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare release archive
+        run: |
+          ARCHIVE_DIR="opnsense-xray"
+          ARCHIVE_NAME="opnsense-xray-${{ steps.version.outputs.VERSION }}"
+          mkdir -p "${ARCHIVE_DIR}"
+
+          # Копируем все файлы, необходимые для ручной установки.
+          # Исключаем служебные каталоги (.git, .github) и сам каталог архива.
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude="${ARCHIVE_DIR}" \
+            . "${ARCHIVE_DIR}/"
+
+          # Создаём .tar.gz архив
+          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_DIR}"
+
+          echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+
+      #- name: Debug git info
+      #  run: |
+      #    echo "=== All tags ==="
+      #    git tag --sort=-v:refname
+      #    echo ""
+      #    echo "=== Commit count ==="
+      #    git rev-list --count HEAD
+
+      - name: Generate changelog to release message
+        id: changelog
+        run: |
+          PREV_TAG=$(git tag --sort=-v:refname | sed -n '2p')
+          TAG="${GITHUB_REF#refs/tags/}"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${TAG}/${ARCHIVE_NAME}.tar.gz"
+
+          {
+            echo "BODY<<EOF"
+            if [ -n "${PREV_TAG}" ]; then
+              echo "## Changes since ${PREV_TAG}"
+              echo ""
+              git log "${PREV_TAG}..HEAD" --pretty=format:"- %s (%h)" --no-merges --reverse
+            else
+              echo "## Initial release 🎉"
+              echo ""
+              git log --pretty=format:"- %s (%h)" --no-merges
+            fi
+
+            echo ""
+            echo ""
+            echo "---"
+            echo "### Manual installation"
+            echo '```sh'
+            echo "fetch -o /tmp/opnsense-xray.tar.gz ${DOWNLOAD_URL}"
+            echo "cd /tmp && tar xzf opnsense-xray.tar.gz"
+            echo "cd opnsense-xray"
+            echo "chmod +x install.sh && sh install.sh"
+            echo '```'
+
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.VERSION }}
+          name: "opnsense-xray ${{ steps.version.outputs.VERSION }}"
+          body: ${{ steps.changelog.outputs.BODY }}
+          draft: false
+          prerelease: ${{ contains(steps.version.outputs.VERSION, '-rc') || contains(steps.version.outputs.VERSION, '-beta') || contains(steps.version.outputs.VERSION, '-alpha') }}
+          files: |
+            ${{ env.ARCHIVE_NAME }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
