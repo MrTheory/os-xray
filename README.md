@@ -270,3 +270,4 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 - [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — Xray-core и протокол VLESS+Reality
 - [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) — tun2socks
 - [OPNsense](https://opnsense.org) — открытая архитектура плагинов
+- [yukh975](https://github.com/yukh975) - за помощь в тестировании
