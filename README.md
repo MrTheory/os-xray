@@ -271,3 +271,4 @@ THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND 
 - [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) — tun2socks
 - [OPNsense](https://opnsense.org) — открытая архитектура плагинов
 - [yukh975](https://github.com/yukh975) - за помощь в тестировании
+- [hohner36](https://github.com/hohner36) - за помощь в тестировании и настройке автоматизации
