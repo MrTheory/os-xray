@@ -2,11 +2,16 @@
 <model>
     <mount>//OPNsense/xray/general</mount>
     <description>Xray General Settings</description>
-    <version>1.0.0</version>
+    <version>1.0.1</version>
     <items>
         <enabled type="BooleanField">
             <default>0</default>
             <Required>N</Required>
         </enabled>
+        <!-- E1: watchdog — автоперезапуск через cron при падении xray-core или tun2socks -->
+        <watchdog_enabled type="BooleanField">
+            <default>0</default>
+            <Required>N</Required>
+        </watchdog_enabled>
     </items>
 </model>

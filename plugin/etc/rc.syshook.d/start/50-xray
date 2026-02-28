@@ -40,8 +40,23 @@ echo "enabled=[$ENABLED] tun=[$TUN_IFACE] mtu=[$MTU]"
 [ -f "$XRAY_BIN" ]   || { echo "xray-core not found"; exit 0; }
 [ -f "$T2S_BIN" ]    || { echo "tun2socks not found"; exit 0; }
 
-# Ищем IP по значению поля "if" — без getenv, прямо в PHP строке
-TUN_IP=$(php -r 'require_once("config.inc"); $cfg = OPNsense\Core\Config::getInstance()->object(); $tun = "'"$TUN_IFACE"'"; foreach ($cfg->interfaces->children() as $iface) { if ((string)$iface->if === $tun) { echo (string)$iface->ipaddr . "/" . (string)$iface->subnet; break; } }' 2>/dev/null)
+# BUG-8 FIX: race condition — xray.inc (boot hook, priority 10) может запускать сервисы
+# параллельно с 50-xray (syshook). Ждём lock-файл до 10 секунд.
+XRAY_LOCK="/var/run/xray_start.lock"
+_lock_tries=0
+while [ -f "$XRAY_LOCK" ] && [ $_lock_tries -lt 10 ]; do
+    echo "  waiting for xray lock (${_lock_tries}s)..."
+    sleep 1
+    _lock_tries=$((_lock_tries+1))
+done
+if [ -f "$XRAY_LOCK" ]; then
+    echo "WARNING: xray lock still held after 10s, proceeding anyway"
+fi
+
+# BUG-2 FIX: TUN_IFACE передаётся через переменную окружения, не через interpolation в PHP-строку.
+# До исправления: $tun = "'"$TUN_IFACE"'" — злоумышленник мог задать tun_interface='; system("rm -rf /"); #
+# После: _TUN_IFACE=$TUN_IFACE — PHP читает через getenv(), shell-код невозможен.
+_TUN_IFACE="$TUN_IFACE" TUN_IP=$(php -r 'require_once("config.inc"); $cfg = OPNsense\Core\Config::getInstance()->object(); $tun = getenv("_TUN_IFACE"); if (empty($tun)) $tun = "proxytun2socks0"; foreach ($cfg->interfaces->children() as $iface) { if ((string)$iface->if === $tun) { echo (string)$iface->ipaddr . "/" . (string)$iface->subnet; break; } }' 2>/dev/null)
 
 echo "TUN IP: [$TUN_IP]"
 

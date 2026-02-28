@@ -136,6 +136,13 @@ class ImportController extends ApiControllerBase
         if (empty($uuid)) {
             return ['error' => 'UUID is empty'];
         }
+        // BUG-10 FIX: валидация формата UUID до попадания в ответ.
+        // Без этой проверки пользователь получал ошибку только в момент Apply через XML Mask —
+        // непонятно далеко от точки ввода. Теперь ошибка сразу при парсинге.
+        // \z вместо $ — строгий конец строки, не допускает трейлинг \n (баг PHP PCRE: $ совпадает перед \n)
+        if (!preg_match('/^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}\z/', $uuid)) {
+            return ['error' => 'Invalid UUID format (expected xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx)'];
+        }
         if (empty($host)) {
             return ['error' => 'Host is empty'];
         }

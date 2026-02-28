@@ -13,7 +13,11 @@ define('T2S_CONF_DIR',  '/usr/local/tun2socks');
 define('T2S_PID',       '/var/run/tun2socks.pid');
 // B7: lock-файл предотвращает race condition при параллельном запуске
 // из xray.inc (boot hook) и 50-xray (syshook) или двойного нажатия Apply
-define('XRAY_LOCK',     '/var/run/xray_start.lock');
+define('XRAY_LOCK',       '/var/run/xray_start.lock');
+// БАГ-5 FIX: флаг намеренной остановки — предотвращает воскрешение watchdogом
+define('XRAY_STOPPED_FLAG', '/var/run/xray_stopped.flag');
+// BUG-7 FIX: stderr демонов в лог-файл — до исправления: > /dev/null 2>&1 — все ошибки xray-core и tun2socks молча выбрасывались.
+define('XRAY_DAEMON_LOG',  '/var/log/xray-core.log');
 
 // ─── Read config from OPNsense config.xml ────────────────────────────────────
 function xray_get_config(): array
@@ -154,6 +158,15 @@ function proc_kill(string $pidfile): void
     }
     $pid = (int)trim(file_get_contents($pidfile));
     if ($pid > 0) {
+        // БАГ-4 FIX: проверяем что PID принадлежит нашему процессу (xray или tun2socks),
+        // а не переиспользован ОС для чужого процесса после краша.
+        $comm = trim((string)shell_exec('ps -o comm= -p ' . $pid . ' 2>/dev/null'));
+        if ($comm === '' || (strpos($comm, 'xray') === false && strpos($comm, 'tun2socks') === false)) {
+            // PID занят чужим процессом — просто удаляем устаревший PID-файл
+            @unlink($pidfile);
+            return;
+        }
+
         exec('/bin/kill -TERM ' . $pid . ' 2>/dev/null');
         // ждём завершения до 3 секунд (30 × 100ms)
         $i = 0;
@@ -175,8 +188,11 @@ function proc_kill(string $pidfile): void
 
 function proc_start(string $bin, string $args, string $pidfile): void
 {
+    // BUG-7 FIX: перенаправляем stderr демона в лог-файл (>>) вместо /dev/null.
+    // Ротация newsyslog: /etc/newsyslog.conf.d/xray.conf (600 KB, 3 файла).
+    $log = escapeshellarg(XRAY_DAEMON_LOG);
     exec('/usr/sbin/daemon -p ' . escapeshellarg($pidfile)
-       . ' ' . escapeshellarg($bin) . ' ' . $args . ' > /dev/null 2>&1 &');
+       . ' ' . escapeshellarg($bin) . ' ' . $args . ' >> ' . $log . ' 2>&1 &');
 }
 
 // ─── B7: Lock helpers — предотвращают race condition при параллельном запуске ─
@@ -214,7 +230,34 @@ function lock_release($fd): void
     @unlink(XRAY_LOCK);
 }
 
-// ─── B9: TUN interface teardown ───────────────────────────────────────────────
+// ─── BUG-3 FIX: config validation before start ──────────────────────────────
+/**
+ * Прогоняет сгенерированный config.json через `xray-core run -test`.
+ * Без этой проверки невалидный конфиг (пустой UUID, порт 0) приводит к
+ * мгновенному краша xray-core, перезаписи PID-файла несуществующим PID
+ * и дублированию процесса при следующем Apply.
+ *
+ * @return bool true — конфиг валиден, false — есть ошибки (они выведены в stdout).
+ */
+function xray_validate_config(string $confFile): bool
+{
+    if (!file_exists(XRAY_BIN)) {
+        // Бинарник не установлен — пропускаем; do_start() поймает это сам.
+        return true;
+    }
+    if (!file_exists($confFile)) {
+        echo "ERROR: config file not found after write: {$confFile}\n";
+        return false;
+    }
+    exec(escapeshellarg(XRAY_BIN) . ' run -test -c ' . escapeshellarg($confFile) . ' 2>&1', $out, $rc);
+    if ($rc !== 0) {
+        echo "ERROR: xray config validation failed:\n" . implode("\n", $out) . "\n";
+        return false;
+    }
+    return true;
+}
+
+// ─── B9: TUN interface teardown ─────────────────────────────────────────────────
 /**
  * Снимает TUN-интерфейс после остановки tun2socks.
  * Без этого OPNsense считает gateway живым и трафик уходит в никуда.
@@ -257,6 +300,9 @@ function do_stop(?string $tunIface = null): void
     // Останавливаем xray-core
     proc_kill(XRAY_PID);
 
+    // БАГ-5 FIX: выставляем флаг намеренной остановки — watchdog его проверяет
+    file_put_contents(XRAY_STOPPED_FLAG, date('Y-m-d H:i:s'));
+
     echo "Stopped.\n";
 }
 
@@ -284,8 +330,16 @@ function do_start(array $c): bool
     }
 
     try {
+        // БАГ-5 FIX: снимаем флаг намеренной остановки — сервис запускается намеренно
+        @unlink(XRAY_STOPPED_FLAG);
+
         xray_write_config($c);
         t2s_write_config($c);
+
+        // BUG-3 FIX: валидация конфига до запуска демона
+        if (!xray_validate_config(XRAY_CONF)) {
+            return false;
+        }
 
         if (!proc_is_running(XRAY_PID)) {
             proc_start(XRAY_BIN, 'run -c ' . escapeshellarg(XRAY_CONF), XRAY_PID);
@@ -295,6 +349,10 @@ function do_start(array $c): bool
             proc_start(T2S_BIN, '-config ' . escapeshellarg(T2S_CONF), T2S_PID);
             usleep(800000);
         }
+
+        // Назначаем IP на TUN-интерфейс через syshook (он уже умеет всё: ждёт TUN, берёт IP из config.xml, reload firewall).
+        // Запуск в фоне через & чтобы не блокировать GUI (syshook ждёт TUN до 10 секунд).
+        exec('/bin/sh /usr/local/etc/rc.syshook.d/start/50-xray &');
 
         echo "Started.\n";
         return true;
@@ -365,6 +423,87 @@ switch ($action) {
     case 'status':
         do_status();
         break;
+
+    case 'validate':
+        // БАГ-6 FIX: сухой прогон конфига через ВРЕМЕННЫЙ файл.
+        // Рабочий config.json НЕ перезаписывается — запущенный сервис не затрагивается.
+        // Генерируем конфиг во временный файл, проверяем, удаляем.
+        $c = xray_get_config();
+        if (empty($c)) {
+            echo "ERROR: No xray config found in OPNsense config.xml\n";
+            exit(1);
+        }
+        $tmpConf = tempnam('/tmp', 'xray-validate-');
+        if ($tmpConf === false) {
+            echo "ERROR: Cannot create temp file for validation\n";
+            exit(1);
+        }
+        try {
+            // Генерируем конфиг прямо во временный файл
+            $flow = ($c['flow'] === 'none' || $c['flow'] === '') ? '' : $c['flow'];
+            $cfg = [
+                'log'      => ['loglevel' => $c['loglevel'] ?: 'warning'],
+                'inbounds' => [[
+                    'tag'      => 'socks-in',
+                    'port'     => $c['socks5_port'],
+                    'listen'   => '127.0.0.1',
+                    'protocol' => 'socks',
+                    'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => '127.0.0.1'],
+                ]],
+                'outbounds' => [
+                    [
+                        'tag'      => 'proxy',
+                        'protocol' => 'vless',
+                        'settings' => [
+                            'vnext' => [[
+                                'address' => $c['server'],
+                                'port'    => $c['port'],
+                                'users'   => [[
+                                    'id'         => $c['uuid'],
+                                    'encryption' => 'none',
+                                    'flow'       => $flow,
+                                ]],
+                            ]],
+                        ],
+                        'streamSettings' => [
+                            'network'         => 'tcp',
+                            'security'        => 'reality',
+                            'realitySettings' => [
+                                'serverName'  => $c['sni'],
+                                'fingerprint' => $c['fingerprint'],
+                                'show'        => false,
+                                'publicKey'   => $c['pubkey'],
+                                'shortId'     => $c['shortid'],
+                                'spiderX'     => '',
+                            ],
+                        ],
+                    ],
+                    ['tag' => 'direct', 'protocol' => 'freedom'],
+                ],
+                'routing' => [
+                    'domainStrategy' => 'IPIfNonMatch',
+                    'rules' => [[
+                        'type'        => 'field',
+                        'ip'          => ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'],
+                        'outboundTag' => 'direct',
+                    ]],
+                ],
+            ];
+            file_put_contents(
+                $tmpConf,
+                json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
+            );
+            chmod($tmpConf, 0600);
+            if (xray_validate_config($tmpConf)) {
+                echo "OK: config is valid\n";
+                exit(0);
+            } else {
+                // Ошибки уже выведены внутри xray_validate_config()
+                exit(1);
+            }
+        } finally {
+            @unlink($tmpConf);  // удаляем в любом случае
+        }
 
     default:
         echo "Unknown action: $action\n";

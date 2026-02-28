@@ -2,13 +2,12 @@
 <model>
     <mount>//OPNsense/xray/instance</mount>
     <description>Xray Instance Settings</description>
-    <version>1.0.1</version>
+    <version>1.0.2</version>
     <items>
         <!-- v1.0.0: добавлена валидация UUID (Mask) и server_address (Mask) -->
-        <!-- v1.0.1: исправлен loglevel — тег-ключ <e> заменён на <loglevel_error>,
-             теперь в config.xml сохраняется "loglevel_error", xray-service-control.php
-             нормализует его в "error". Workaround ($v==='e') расширен для обратной совместимости:
-             оба значения ("e" и "loglevel_error") маппятся в "error". -->
+        <!-- v1.0.1: исправлен loglevel — тег-ключ <e> заменён на <loglevel_error>;
+             нормализация в "error" — в xray-service-control.php; обратная совместимость с "e" сохранена -->
+        <!-- v1.0.2: BUG-6 — добавлена Mask валидация tun_interface: [a-z][a-z0-9]{0,13}[0-9] -->
         <server_address type="TextField">
             <Required>Y</Required>
             <Mask>/^[a-zA-Z0-9]([a-zA-Z0-9\-\.]{0,251}[a-zA-Z0-9])?$|^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$/</Mask>
@@ -62,6 +61,13 @@
         <tun_interface type="TextField">
             <Default>proxytun2socks0</Default>
             <Required>Y</Required>
+            <!-- BUG-6 FIX: валидация имени TUN-интерфейса.
+                 До исправления: любая строка проходила в ifconfig/proc_start — RCE возможен через
+                 значения вида '; rm -rf /'.
+                 Правила для FreeBSD: начинается с буквы, не более 15 символов,
+                 только [a-z0-9], заканчивается цифрой. -->
+            <Mask>/^[a-z][a-z0-9]{0,13}[0-9]$/</Mask>
+            <ValidationMessage>Interface name must start with a letter, end with a digit, contain only lowercase letters and digits, and be at most 15 characters (e.g. proxytun2socks0)</ValidationMessage>
         </tun_interface>
         <mtu type="IntegerField">
             <Default>1500</Default>

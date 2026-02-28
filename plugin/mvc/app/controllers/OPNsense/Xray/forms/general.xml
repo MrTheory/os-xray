@@ -5,4 +5,10 @@
         <type>checkbox</type>
         <help>Enable the Xray-core VLESS+Reality VPN service (xray-core + tun2socks)</help>
     </field>
+    <field>
+        <id>general.watchdog_enabled</id>
+        <label>Enable Watchdog</label>
+        <type>checkbox</type>
+        <help>Automatically restart xray-core and tun2socks if they crash (checked every minute via cron). Writes recovery events to /var/log/xray-watchdog.log.</help>
+    </field>
 </form>

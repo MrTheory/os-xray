@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="1.3.0"
+PLUGIN_VERSION="1.6.0"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -36,7 +36,14 @@ if [ "${1:-}" = "uninstall" ]; then
 
     echo "==> Removing plugin files..."
     rm -f  /usr/local/opnsense/scripts/Xray/xray-service-control.php
+    rm -f  /usr/local/opnsense/scripts/Xray/xray-testconnect.php
+    rm -f  /usr/local/opnsense/scripts/Xray/xray-watchdog.php
+    rm -f  /usr/local/opnsense/scripts/Xray/xray-ifstats.php
     rmdir  /usr/local/opnsense/scripts/Xray 2>/dev/null || true
+    # BUG-11: удаляем конфиг ротации логов newsyslog
+    rm -f  /etc/newsyslog.conf.d/xray.conf
+    # Логи xray-core оставляем для истории (удалять вручную при необходимости):
+    # rm -f /var/log/xray-core.log /var/log/xray-core.log.0.bz2 /var/log/xray-core.log.1.bz2 /var/log/xray-core.log.2.bz2
     rm -f  /usr/local/opnsense/service/conf/actions.d/actions_xray.conf
     rm -rf /usr/local/opnsense/mvc/app/models/OPNsense/Xray       # включает ACL/ и Menu/
     rm -rf /usr/local/opnsense/mvc/app/controllers/OPNsense/Xray
@@ -262,8 +269,16 @@ import_existing_config() {
 
     # Шаг 2: PHP читает JSON из tmpfile и записывает в OPNsense config.xml.
     # Heredoc с 'PHPEOF' — shell не интерполирует $-переменные внутри.
+    #
+    # BUG-9 FIX: config.inc ищется PHP по include_path.
+    # На этапе установки CWD может быть любым (часто /root или /tmp),
+    # поэтому явно добавляем путь OPNsense через set_include_path() до вызова require.
+    # config.inc расположен в /usr/local/etc/inc/ на всех OPNsense-системах 25.x.
     _XRAY_JSON="$_TMP_JSON" php << 'PHPEOF'
 <?php
+// BUG-9 FIX: явно устанавливаем include_path перед require_once.
+// Без этого при нестандартном CWD (например /root или /tmp) PHP не найдёт config.inc.
+set_include_path('/usr/local/etc/inc' . PATH_SEPARATOR . get_include_path());
 require_once('config.inc');
 
 $jsonFile = getenv('_XRAY_JSON');
@@ -398,6 +413,14 @@ echo "==> Step 3: Installing plugin files..."
 install -d /usr/local/opnsense/scripts/Xray
 install -m 0755 "$PLUGIN_DIR/scripts/Xray/xray-service-control.php" \
                 /usr/local/opnsense/scripts/Xray/
+install -m 0755 "$PLUGIN_DIR/scripts/Xray/xray-testconnect.php" \
+                /usr/local/opnsense/scripts/Xray/
+# E1: watchdog — автоперезапуск процессов через cron
+install -m 0755 "$PLUGIN_DIR/scripts/Xray/xray-watchdog.php" \
+                /usr/local/opnsense/scripts/Xray/
+# E4: статистика TUN-интерфейса для панели Diagnostics
+install -m 0755 "$PLUGIN_DIR/scripts/Xray/xray-ifstats.php" \
+                /usr/local/opnsense/scripts/Xray/
 
 install -m 0644 "$PLUGIN_DIR/service/conf/actions.d/actions_xray.conf" \
                 /usr/local/opnsense/service/conf/actions.d/
@@ -444,6 +467,13 @@ install -m 0644 "$PLUGIN_DIR/etc/inc/plugins.inc.d/xray.inc" \
 install -d /usr/local/etc/rc.syshook.d/start
 install -m 0755 "$PLUGIN_DIR/etc/rc.syshook.d/start/50-xray" \
                 /usr/local/etc/rc.syshook.d/start/
+
+# BUG-11: ротация /var/log/xray-core.log через newsyslog
+# Без этого лог растёт бесконечно (файл появился после BUG-7 fix).
+# Ротация: при превышении 600 KB, 3 архива, bzip2-сжатие.
+install -d /etc/newsyslog.conf.d
+install -m 0644 "$PLUGIN_DIR/etc/newsyslog.conf.d/xray.conf" \
+                /etc/newsyslog.conf.d/
 
 install -d -m 0750 /usr/local/etc/xray-core
 install -d -m 0750 /usr/local/tun2socks
