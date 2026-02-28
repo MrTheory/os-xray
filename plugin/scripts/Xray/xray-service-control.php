@@ -258,6 +258,65 @@ function xray_validate_config(string $confFile): bool
     return true;
 }
 
+// ─── lo0 alias management (for non-standard socks5_listen addresses) ──────────────
+/**
+ * Проверяет, нужен ли lo0 alias для данного адреса.
+ * 127.0.0.1 и 0.0.0.0 существуют на FreeBSD без alias.
+ * Любой другой адрес из 127.0.0.0/8 требует явного alias на lo0.
+ */
+function lo0_needs_alias(string $addr): bool
+{
+    if ($addr === '127.0.0.1' || $addr === '0.0.0.0') {
+        return false;
+    }
+    // Только 127.x.x.x требует alias на lo0; для других адресов (реальные интерфейсы)
+    // alias не нужен — xray забиндится напрямую (или упадёт, если адрес не существует)
+    $parts = explode('.', $addr);
+    return count($parts) === 4 && $parts[0] === '127';
+}
+
+/**
+ * Добавляет alias на lo0 для socks5_listen адреса.
+ * Вызывается в do_start() перед запуском xray-core.
+ */
+function lo0_alias_ensure(string $addr): void
+{
+    if (!lo0_needs_alias($addr)) {
+        return;
+    }
+    // Проверяем, не добавлен ли alias уже
+    exec('/sbin/ifconfig lo0 2>/dev/null', $out, $rc);
+    if ($rc !== 0) {
+        echo "WARNING: Cannot read lo0 interface\n";
+        return;
+    }
+    $ifOutput = implode('\n', $out);
+    if (strpos($ifOutput, $addr) !== false) {
+        return; // alias уже есть
+    }
+    exec('/sbin/ifconfig lo0 alias ' . escapeshellarg($addr) . ' 2>/dev/null', $out2, $rc2);
+    if ($rc2 !== 0) {
+        echo "WARNING: Failed to add lo0 alias {$addr}\n";
+    } else {
+        echo "INFO: Added lo0 alias {$addr}\n";
+    }
+}
+
+/**
+ * Удаляет alias с lo0 для socks5_listen адреса.
+ * Вызывается в do_stop().
+ */
+function lo0_alias_remove(string $addr): void
+{
+    if (!lo0_needs_alias($addr)) {
+        return;
+    }
+    exec('/sbin/ifconfig lo0 -alias ' . escapeshellarg($addr) . ' 2>/dev/null', $out, $rc);
+    if ($rc === 0) {
+        echo "INFO: Removed lo0 alias {$addr}\n";
+    }
+}
+
 // ─── B9: TUN interface teardown ─────────────────────────────────────────────────
 /**
  * Снимает TUN-интерфейс после остановки tun2socks.
@@ -301,6 +360,10 @@ function do_stop(?string $tunIface = null): void
     // Останавливаем xray-core
     proc_kill(XRAY_PID);
 
+    // Удаляем lo0 alias если был добавлен для нестандартного socks5_listen
+    $c2 = xray_get_config();
+    lo0_alias_remove($c2['socks5_listen'] ?? '127.0.0.1');
+
     // БАГ-5 FIX: выставляем флаг намеренной остановки — watchdog его проверяет
     file_put_contents(XRAY_STOPPED_FLAG, date('Y-m-d H:i:s'));
 
@@ -336,6 +399,9 @@ function do_start(array $c): bool
 
         xray_write_config($c);
         t2s_write_config($c);
+
+        // Добавляем lo0 alias для нестандартных loopback-адресов (127.x.x.x кроме 127.0.0.1)
+        lo0_alias_ensure($c['socks5_listen']);
 
         // BUG-3 FIX: валидация конфига до запуска демона
         if (!xray_validate_config(XRAY_CONF)) {

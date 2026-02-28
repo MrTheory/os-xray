@@ -73,8 +73,8 @@
         <id>instance.socks5_listen</id>
         <label>SOCKS5 Listen Address</label>
         <type>text</type>
-        <help>IP address xray-core binds for its SOCKS5 inbound. tun2socks connects here to forward all TUN traffic through the proxy.</help>
-        <hint>Default: 127.0.0.1 (loopback only). Use 0.0.0.0 to listen on all interfaces.</hint>
+        <help>IP address xray-core binds for its SOCKS5 inbound. tun2socks connects here to forward all TUN traffic through the proxy. Use 127.0.0.1 (loopback, recommended), 0.0.0.0 (all interfaces), or any IP assigned to a real OPNsense interface (e.g. 192.168.1.1). Other 127.x.x.x addresses require a manual lo0 alias on FreeBSD and are not recommended.</help>
+        <hint>e.g. 127.0.0.1 or 0.0.0.0</hint>
     </field>
     <field>
         <id>instance.socks5_port</id>
