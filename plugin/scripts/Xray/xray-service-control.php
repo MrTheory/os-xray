@@ -52,6 +52,7 @@ function xray_get_config(): array
         'pubkey'       => (string)($inst->reality_pubkey      ?? ''),
         'shortid'      => (string)($inst->reality_shortid     ?? ''),
         'fingerprint'  => (string)($inst->reality_fingerprint ?? 'chrome'),
+        'socks5_listen' => (string)($inst->socks5_listen ?? '127.0.0.1') ?: '127.0.0.1',
         'socks5_port'  => (int)(string)($inst->socks5_port    ?? 10808),
         'tun_iface'    => (string)($inst->tun_interface       ?? 'proxytun2socks0'),
         'mtu'          => (int)(string)($inst->mtu            ?? 1500),
@@ -69,9 +70,9 @@ function xray_write_config(array $c): void
         'inbounds' => [[
             'tag'      => 'socks-in',
             'port'     => $c['socks5_port'],
-            'listen'   => '127.0.0.1',
+            'listen'   => $c['socks5_listen'],
             'protocol' => 'socks',
-            'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => '127.0.0.1'],
+            'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => $c['socks5_listen']],
         ]],
         'outbounds' => [
             [
@@ -129,7 +130,7 @@ function t2s_write_config(array $c): void
     if (!is_dir(T2S_CONF_DIR)) {
         mkdir(T2S_CONF_DIR, 0750, true);
     }
-    $yaml = "proxy: socks5://127.0.0.1:{$c['socks5_port']}\n"
+    $yaml = "proxy: socks5://{$c['socks5_listen']}:{$c['socks5_port']}\n"
           . "device: {$c['tun_iface']}\n"
           . "mtu: {$c['mtu']}\n"
           . "loglevel: info\n";
@@ -446,9 +447,9 @@ switch ($action) {
                 'inbounds' => [[
                     'tag'      => 'socks-in',
                     'port'     => $c['socks5_port'],
-                    'listen'   => '127.0.0.1',
+                    'listen'   => $c['socks5_listen'],
                     'protocol' => 'socks',
-                    'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => '127.0.0.1'],
+                    'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => $c['socks5_listen']],
                 ]],
                 'outbounds' => [
                     [

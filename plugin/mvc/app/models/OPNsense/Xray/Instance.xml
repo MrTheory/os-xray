@@ -2,7 +2,7 @@
 <model>
     <mount>//OPNsense/xray/instance</mount>
     <description>Xray Instance Settings</description>
-    <version>1.0.2</version>
+    <version>1.0.3</version>
     <items>
         <!-- v1.0.0: добавлена валидация UUID (Mask) и server_address (Mask) -->
         <!-- v1.0.1: исправлен loglevel — тег-ключ <e> заменён на <loglevel_error>;
@@ -54,6 +54,13 @@
                 <random>random</random>
             </OptionValues>
         </reality_fingerprint>
+        <!-- v1.0.3: socks5_listen — настраиваемый IP для SOCKS5 inbound (ранее хардкод 127.0.0.1) -->
+        <socks5_listen type="TextField">
+            <Default>127.0.0.1</Default>
+            <Required>N</Required>
+            <Mask>/^((25[0-5]|2[0-4]\d|[01]?\d\d?)\.){3}(25[0-5]|2[0-4]\d|[01]?\d\d?)$/</Mask>
+            <ValidationMessage>Must be a valid IPv4 address (e.g. 127.0.0.1 or 0.0.0.0)</ValidationMessage>
+        </socks5_listen>
         <socks5_port type="PortField">
             <Default>10808</Default>
             <Required>Y</Required>
