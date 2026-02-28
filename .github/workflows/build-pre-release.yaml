@@ -1,0 +1,64 @@
+name: Build Pre-release from release* branch
+
+on:
+  push:
+    branches:
+      - 'release*'
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    name: Build on release* push
+    runs-on: self-hosted  #ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Get commit short hash
+        id: commit
+        run: echo "SHORT_HASH=$(git rev-parse --short HEAD)" >> "$GITHUB_OUTPUT"
+
+      - name: Get current date
+        id: date
+        run: echo "DATE=$(date +'%Y%m%d-%H%M%S')" >> "$GITHUB_OUTPUT"
+
+      - name: Prepare build archive
+        run: |
+          ARCHIVE_DIR="opnsense-xray-pre-${{ github.ref_name }}"
+          ARCHIVE_NAME="opnsense-xray-pre-${{ github.ref_name }}-${{ steps.date.outputs.DATE }}-${{ steps.commit.outputs.SHORT_HASH }}"
+          mkdir -p "${ARCHIVE_DIR}"
+
+          # Копируем все файлы, необходимые для установки.
+          # Исключаем служебные каталоги (.git, .github) и сам каталог архива.
+          rsync -av \
+            --exclude='.git' \
+            --exclude='.github' \
+            --exclude="${ARCHIVE_DIR}" \
+            . "${ARCHIVE_DIR}/"
+
+          # Создаём .tar.gz архив
+          tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_DIR}"
+
+          echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME }}.tar.gz
+          path: ${{ env.ARCHIVE_NAME }}.tar.gz
+          retention-days: 30
+
+      - name: Display build info
+        run: |
+          echo "Build Information:"
+          echo "  Branch: ${{ github.ref_name }}"
+          echo "  Commit: ${{ steps.commit.outputs.SHORT_HASH }}"
+          echo "  Date: ${{ steps.date.outputs.DATE }}"
+          echo "  Archive: ${{ env.ARCHIVE_NAME }}.tar.gz"
+          ls -lh "${{ env.ARCHIVE_NAME }}.tar.gz"
