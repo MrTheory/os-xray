@@ -250,7 +250,7 @@ function xray_validate_config(string $confFile): bool
         echo "ERROR: config file not found after write: {$confFile}\n";
         return false;
     }
-    exec(escapeshellarg(XRAY_BIN) . ' run -test -c ' . escapeshellarg($confFile) . ' 2>&1', $out, $rc);
+    exec(escapeshellarg(XRAY_BIN) . ' -test -c ' . escapeshellarg($confFile) . ' 2>&1', $out, $rc);
     if ($rc !== 0) {
         echo "ERROR: xray config validation failed:\n" . implode("\n", $out) . "\n";
         return false;
@@ -500,7 +500,7 @@ switch ($action) {
             echo "ERROR: No xray config found in OPNsense config.xml\n";
             exit(1);
         }
-        $tmpConf = tempnam('/tmp', 'xray-validate-');
+        $tmpConf = tempnam('/tmp', 'xray-validate-') . '.json';
         if ($tmpConf === false) {
             echo "ERROR: Cannot create temp file for validation\n";
             exit(1);

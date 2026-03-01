@@ -5,6 +5,18 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.9.1] — 2026-03-01
+
+### Хотфикс — Validate Config: пустой ответ от configd
+
+#### БАГ — `xray_validate_config()`: неверный синтаксис команды
+- **[hotfix]** `xray-service-control.php`: в `xray_validate_config()` команда `xray run -test -c` заменена на `xray -test -c` — субкоманда `run` не принимает флаг `-test`; при неверном синтаксисе xray-core 1.8.x писал ошибку в stderr минуя `exec()` capture, `$out` оставался пустым, GUI получал пустую строку и показывал «No response from configd»
+
+#### БАГ — `case 'validate'`: tempnam без расширения `.json`
+- **[hotfix]** `xray-service-control.php`: `tempnam('/tmp', 'xray-validate-')` заменён на `tempnam('/tmp', 'xray-validate-') . '.json'` — xray-core определяет формат конфига по расширению файла; файл без `.json` вызывал `Failed to get format` и немедленный выход с кодом 1 до любой валидации содержимого
+
+---
+
 ## [1.9.0] — 2026-02-28
 
 ### Улучшение UX — Подсказка для поля SOCKS5 Listen Address
