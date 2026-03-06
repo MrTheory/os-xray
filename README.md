@@ -6,7 +6,7 @@
 [![OPNsense](https://img.shields.io/badge/OPNsense-25.x%20%2F%2026.x-blue)](https://opnsense.org)
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-14.x%20amd64-red)](https://freebsd.org)
 
-**Xray-core (VLESS+Reality) VPN plugin for OPNsense**
+**Xray-core (VLESS+Reality) VPN plugin for OPNsense** — v1.10.0
 
 Xray-core с протоколом VLESS+Reality + tun2socks — нативный VPN-клиент для OPNsense с поддержкой селективной маршрутизации. Обходит DPI-блокировки за счёт маскировки трафика под легитимный TLS.
 
@@ -79,11 +79,17 @@ sh install.sh
 
 Установщик автоматически:
 
+- Покажет текущую и новую версию плагина и запросит подтверждение
 - Проверит наличие бинарников xray-core и tun2socks — если их нет, выведет ссылки для скачивания
 - Проверит, не занят ли SOCKS5-порт (10808 по умолчанию) другим процессом
 - Найдёт существующие конфиги и импортирует их в OPNsense (поля в GUI заполнятся сразу)
 - Скопирует все файлы плагина, перезапустит configd, очистит кеши
 - Установит boot-скрипт для автозапуска после ребута
+
+Проверить установленную версию:
+```sh
+configctl xray version
+```
 
 ---
 
@@ -119,6 +125,30 @@ sh install.sh
 - **Firewall → Rules → LAN** — добавь правило: Source = LAN net, Destination = alias, Gateway = PROXYTUN_GW
 
 MSS Clamping для Xray не требуется (в отличие от WireGuard).
+
+---
+
+## Outbound NAT (обязательно!)
+
+Без этого трафик через туннель не будет NATиться и не уйдёт дальше VPN-сервера.
+
+**Firewall → NAT → Outbound**
+
+1. Переключи режим на **Hybrid outbound NAT rule generation** (если ещё не переключён)
+2. Добавь правило **+**:
+
+| Поле | Значение |
+|------|----------|
+| Interface | PROXYTUN (proxytun2socks0) |
+| TCP/IP Version | IPv4 |
+| Protocol | any |
+| Source address | LAN net |
+| Source port | any |
+| Destination address | any |
+| Destination port | any |
+| Translation / target | Interface address |
+
+> **Почему это нужно:** OPNsense по умолчанию NATит трафик только через WAN. Трафик, уходящий через TUN-интерфейс, не попадает под автоматические правила NAT. Без ручного правила пакеты уйдут с исходным LAN-адресом (например 192.168.1.x) и VPN-сервер их отбросит.
 
 ---
 
@@ -162,6 +192,30 @@ sh install.sh uninstall
 
 ## Устранение неполадок
 
+### Диагностика — с чего начать
+
+```sh
+# 1. Версия плагина
+configctl xray version
+
+# 2. Статус сервисов
+configctl xray status
+
+# 3. Бинарники на месте?
+ls -la /usr/local/bin/xray-core /usr/local/tun2socks/tun2socks
+
+# 4. Логи
+tail -30 /var/log/xray-core.log
+cat /tmp/xray_syshook.log
+
+# 5. TUN-интерфейс существует?
+ifconfig proxytun2socks0
+
+# 6. Конфиги
+cat /usr/local/etc/xray-core/config.json
+cat /usr/local/tun2socks/config.yaml
+```
+
 ### Меню VPN → Xray не появляется
 
 ```sh
@@ -169,48 +223,63 @@ rm -f /var/lib/php/tmp/opnsense_menu_cache.xml
 # Затем Ctrl+F5 в браузере
 ```
 
-### Проверить статус сервисов
+### Туннель не поднимается
 
 ```sh
-/usr/local/opnsense/scripts/Xray/xray-service-control.php status
-# {"status":"ok","xray_core":"running","tun2socks":"running"}
+# Запустить вручную и посмотреть вывод
+/usr/local/opnsense/scripts/Xray/xray-service-control.php start
+```
+
+| Ошибка в логе | Причина | Решение |
+|---|---|---|
+| `xray-core not found` | Бинарник не установлен | Установи xray-core (см. раздел ниже) |
+| `tun2socks not found` | Бинарник не установлен | Установи tun2socks (см. раздел ниже) |
+| `Port XXXXX already in use` | SOCKS5 порт занят | Смени порт в GUI → Instance → SOCKS5 Port |
+| `ERROR: config validation failed` | Невалидный конфиг xray-core | Проверь параметры VLESS (UUID, SNI, PublicKey) |
+| `ERROR: xray-core exited immediately` | xray-core не стартует | Смотри `/var/log/xray-core.log` |
+| `No config found in config.xml` | Не заполнены поля в GUI | Заполни Instance → Import VLESS link → Apply |
+| `SKIP: lock file held` | Lock занят параллельным процессом | Подожди или удали `/var/run/xray_start.lock` |
+
+### Сервис "stopped" в дашборде после перезагрузки
+
+Xray запускается автоматически при загрузке через syshook и boot hook, если `General → Enable Xray` включён. Если не стартует:
+
+```sh
+# Проверь лог
+cat /tmp/xray_syshook.log
+
+# Проверь syshook скрипт
+cat /usr/local/etc/rc.syshook.d/start/50-xray
+
+# Запусти вручную
+configctl xray start
+```
+
+### Сайты не открываются через VPN (туннель работает, curl OK, но браузер не грузит)
+
+Не настроен Outbound NAT (см. раздел выше). Без NAT-правила на TUN-интерфейсе пакеты уходят с LAN-адресом и VPN-сервер их отбрасывает.
+
+### Кнопка Apply / Start / Stop не работает ("No response from configd")
+
+```sh
+# 1. Перезапусти configd
+service configd restart
+
+# 2. Проверь lock-файл — зависший процесс?
+ls -la /var/run/xray_start.lock
+# Если файл старый (> 1 минуты):
+rm -f /var/run/xray_start.lock
+service configd restart
+
+# 3. Посмотри лог
+tail -20 /var/log/xray-core.log
 ```
 
 ### Проверить соединение через туннель
 
 ```sh
-curl --socks5 127.0.0.1:10808 -s -o /dev/null -w "%{http_code}" https://1.1.1.1 --max-time 5
-# 200 = OK
-```
-
-### Просмотреть логи
-
-```sh
-# Boot-лог (автозапуск, назначение IP, reload firewall)
-cat /tmp/xray_syshook.log
-
-# Лог xray-core и tun2socks (ошибки подключения, Reality handshake)
-tail -50 /var/log/xray-core.log
-
-# Лог watchdog (перезапуски процессов)
-tail -50 /var/log/xray-watchdog.log
-
-# Ошибки PHP (проблемы с GUI или API)
-tail -30 /var/lib/php/tmp/PHP_errors.log
-```
-
-### Проверить процессы и PID-файлы
-
-```sh
-# Запущены ли процессы
-ps aux | grep -E 'xray|tun2socks'
-
-# PID-файлы
-cat /var/run/xray_core.pid
-cat /var/run/tun2socks.pid
-
-# Флаг намеренной остановки (если есть — watchdog не перезапустит)
-cat /var/run/xray_stopped.flag
+curl --socks5 127.0.0.1:10808 -s -o /dev/null -w "%{http_code}" https://1.1.1.1 --max-time 10
+# 200 = OK, 000 = нет связи
 ```
 
 ### Проверить TUN-интерфейс
@@ -223,6 +292,48 @@ ifconfig proxytun2socks0
 netstat -ibn | grep proxytun2socks0
 ```
 
+### Watchdog не перезапускает сервис
+
+```sh
+# Флаг намеренной остановки — если существует, watchdog игнорирует
+ls -la /var/run/xray_stopped.flag
+# Удалить флаг чтобы watchdog начал перезапускать
+rm -f /var/run/xray_stopped.flag
+
+# Проверь что watchdog включён
+# GUI → General → Enable Watchdog ✓
+
+# Лог watchdog
+tail -50 /var/log/xray-watchdog.log
+```
+
+### Где искать логи
+
+| Лог | Путь | Содержит |
+|---|---|---|
+| Xray Core | `/var/log/xray-core.log` | Ошибки xray-core и tun2socks (Reality handshake, connection) |
+| Boot | `/tmp/xray_syshook.log` | Автозапуск, назначение IP, reload firewall |
+| Watchdog | `/var/log/xray-watchdog.log` | Перезапуски процессов |
+| PHP ошибки | `/var/lib/php/tmp/PHP_errors.log` | Ошибки OPNsense PHP (GUI, API) |
+| Система | `/var/log/system/latest.log` | Ошибки configd |
+
+### Полезные команды
+
+```sh
+configctl xray version                # версия плагина
+configctl xray status                 # статус сервисов (JSON)
+configctl xray start                  # запустить
+configctl xray stop                   # остановить
+configctl xray restart                # перезапустить
+configctl xray validate               # сухой прогон конфига
+configctl xray testconnect            # проверка соединения
+configctl xray ifstats                # статистика TUN-интерфейса
+ps aux | grep -E 'xray|tun2socks'    # процессы
+ifconfig proxytun2socks0              # TUN-интерфейс
+netstat -rn | grep proxytun           # таблица маршрутизации
+tail -f /var/log/xray-core.log        # мониторинг лога в реальном времени
+```
+
 ### Проверить конфиги
 
 ```sh
@@ -233,52 +344,13 @@ cat /usr/local/etc/xray-core/config.json
 cat /usr/local/tun2socks/config.yaml
 
 # Сухой прогон конфига без перезапуска сервиса
-/usr/local/opnsense/scripts/Xray/xray-service-control.php validate
-```
-
-### Проверить lock и race condition
-
-```sh
-# Не завис ли lock (если Start/Restart не реагирует)
-ls -la /var/run/xray_start.lock
-# Если файл старый — удалить вручную:
-rm -f /var/run/xray_start.lock
-```
-
-### Ручной запуск и отладка
-
-```sh
-# Запустить вручную с выводом в консоль
-/usr/local/opnsense/scripts/Xray/xray-service-control.php start
-
-# Остановить вручную
-/usr/local/opnsense/scripts/Xray/xray-service-control.php stop
-
-# Перезапустить
-/usr/local/opnsense/scripts/Xray/xray-service-control.php restart
-
-# Запустить boot-скрипт вручную с выводом
-sh /usr/local/etc/rc.syshook.d/start/50-xray
-
-# Запустить watchdog вручную
-/usr/local/opnsense/scripts/Xray/xray-watchdog.php
-```
-
-### Проверить configd
-
-```sh
-# Список зарегистрированных actions xray
-grep -A3 '\[xray' /usr/local/opnsense/service/conf/actions.d/actions_xray.conf
-
-# Перезапустить configd если actions не работают
-service configd restart
+configctl xray validate
 ```
 
 ### Сброс и переустановка
 
 ```sh
 # Полная переустановка без потери конфига OPNsense
-cd /tmp/os-xray-v5
 sh install.sh uninstall
 sh install.sh
 ```
@@ -320,7 +392,7 @@ os-xray/
         │   └── Api/
         │       ├── GeneralController.php
         │       ├── InstanceController.php
-        │       ├── ServiceController.php       ← start/stop/restart/status/log/validate/diagnostics/testconnect
+        │       ├── ServiceController.php       ← start/stop/restart/status/version/log/validate/diagnostics/testconnect
         │       └── ImportController.php        ← парсинг VLESS-ссылки
         └── views/OPNsense/Xray/
             └── general.volt
@@ -357,6 +429,7 @@ install -m 0755 /tmp/tun2socks-freebsd-amd64 /usr/local/tun2socks/tun2socks
 
 | Версия | Что изменилось |
 |--------|---------------|
+| 1.10.0 | Проверка версии при установке, `configctl xray version`, API version endpoint, Outbound NAT в README |
 | 1.9.3  | Фиксы P1 (implode, socks5_port, validate tempfile, дедупликация), Bypass Networks, Copy Debug Info, Ping RTT, автообновление Diagnostics |
 | 1.9.2  | Фикс fatal error tun2socks при stop, ротация watchdog лога |
 | 1.9.1  | Хотфикс validate: синтаксис xray -test, расширение .json для tempnam |

@@ -18,8 +18,9 @@
 set -e
 set -u
 
-PLUGIN_VERSION="1.6.0"
+PLUGIN_VERSION="1.10.0"
 PLUGIN_DIR="$(dirname "$0")/plugin"
+VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
 # ─────────────────────────────────────────────────────────────────────────────
 # HELPERS
@@ -45,7 +46,7 @@ if [ "${1:-}" = "uninstall" ]; then
     # Логи xray-core оставляем для истории (удалять вручную при необходимости):
     # rm -f /var/log/xray-core.log /var/log/xray-core.log.0.bz2 /var/log/xray-core.log.1.bz2 /var/log/xray-core.log.2.bz2
     rm -f  /usr/local/opnsense/service/conf/actions.d/actions_xray.conf
-    rm -rf /usr/local/opnsense/mvc/app/models/OPNsense/Xray       # включает ACL/ и Menu/
+    rm -rf /usr/local/opnsense/mvc/app/models/OPNsense/Xray       # включает ACL/, Menu/, version.txt
     rm -rf /usr/local/opnsense/mvc/app/controllers/OPNsense/Xray
     rm -rf /usr/local/opnsense/mvc/app/views/OPNsense/Xray
     rm -f  /usr/local/etc/inc/plugins.inc.d/xray.inc
@@ -328,9 +329,47 @@ PHPEOF
 # ─────────────────────────────────────────────────────────────────────────────
 # INSTALL
 # ─────────────────────────────────────────────────────────────────────────────
+
+# ─────────────────────────────────────────────────────────────────────────────
+# VERSION CHECK & CONFIRMATION
+# ─────────────────────────────────────────────────────────────────────────────
+CURRENT_VERSION="not installed"
+if [ -f "$VERSION_FILE" ]; then
+    CURRENT_VERSION=$(cat "$VERSION_FILE" 2>/dev/null || echo "unknown")
+fi
+
 echo "============================================================"
-echo "  os-xray plugin installer v${PLUGIN_VERSION}"
+echo "  os-xray plugin installer"
 echo "============================================================"
+echo ""
+echo "  Current version : ${CURRENT_VERSION}"
+echo "  New version     : ${PLUGIN_VERSION}"
+echo ""
+
+if [ "$CURRENT_VERSION" = "$PLUGIN_VERSION" ]; then
+    echo "  Version ${PLUGIN_VERSION} is already installed."
+    printf "  Reinstall? [y/N] "
+    read -r _CONFIRM < /dev/tty 2>/dev/null || _CONFIRM="n"
+    case "$_CONFIRM" in
+        [yY]*) ;;
+        *) echo "  Installation cancelled."; exit 0 ;;
+    esac
+elif [ "$CURRENT_VERSION" != "not installed" ]; then
+    printf "  Upgrade from ${CURRENT_VERSION} to ${PLUGIN_VERSION}? [Y/n] "
+    read -r _CONFIRM < /dev/tty 2>/dev/null || _CONFIRM="y"
+    case "$_CONFIRM" in
+        [nN]*) echo "  Installation cancelled."; exit 0 ;;
+        *) ;;
+    esac
+else
+    printf "  Install version ${PLUGIN_VERSION}? [Y/n] "
+    read -r _CONFIRM < /dev/tty 2>/dev/null || _CONFIRM="y"
+    case "$_CONFIRM" in
+        [nN]*) echo "  Installation cancelled."; exit 0 ;;
+        *) ;;
+    esac
+fi
+
 echo ""
 
 # ── Шаг 1: Проверка бинарников ───────────────────────────────────────────────
@@ -478,6 +517,10 @@ install -m 0644 "$PLUGIN_DIR/etc/newsyslog.conf.d/xray.conf" \
 install -d -m 0750 /usr/local/etc/xray-core
 install -d -m 0750 /usr/local/tun2socks
 
+# Write version file
+echo "$PLUGIN_VERSION" > "$VERSION_FILE"
+chmod 0644 "$VERSION_FILE"
+
 echo "[OK]  Plugin files installed."
 
 # ── Шаг 4: Импорт существующего конфига ──────────────────────────────────────
@@ -528,6 +571,8 @@ echo ""
 echo "============================================================"
 echo "  os-xray v${PLUGIN_VERSION} installed successfully!"
 echo "============================================================"
+echo ""
+echo "  Check version:  configctl xray version"
 echo ""
 
 if [ "$CONFIG_XML_HAS_XRAY" = "1" ]; then

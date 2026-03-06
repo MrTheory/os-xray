@@ -18,6 +18,7 @@ define('XRAY_LOCK',       '/var/run/xray_start.lock');
 define('XRAY_STOPPED_FLAG', '/var/run/xray_stopped.flag');
 // BUG-7 FIX: stderr демонов в лог-файл — до исправления: > /dev/null 2>&1 — все ошибки xray-core и tun2socks молча выбрасывались.
 define('XRAY_DAEMON_LOG',  '/var/log/xray-core.log');
+define('XRAY_VERSION_FILE', '/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt');
 
 // ─── Read config from OPNsense config.xml ────────────────────────────────────
 function xray_get_config(): array
@@ -541,6 +542,11 @@ switch ($action) {
         } finally {
             @unlink($tmpConf);  // удаляем в любом случае
         }
+
+    case 'version':
+        $ver = file_exists(XRAY_VERSION_FILE) ? trim(file_get_contents(XRAY_VERSION_FILE)) : 'unknown';
+        echo json_encode(['version' => $ver]) . "\n";
+        break;
 
     default:
         echo "Unknown action: $action\n";

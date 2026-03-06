@@ -181,6 +181,20 @@ class ServiceController extends ApiMutableServiceControllerBase
      * Данные читает xray-ifstats.php через configd.
      * GET: читаем данные — не модифицируем состояние, GET достаточно.
      */
+    /**
+     * GET /api/xray/service/version
+     */
+    public function versionAction()
+    {
+        $backend = new Backend();
+        $result  = $backend->configdRun('xray version');
+        $decoded = json_decode($result, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            return $decoded;
+        }
+        return ['version' => 'unknown'];
+    }
+
     public function diagnosticsAction()
     {
         $backend = new Backend();

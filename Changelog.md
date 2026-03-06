@@ -5,6 +5,22 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [1.10.0] — 2026-03-06
+
+### Added
+- **Version check in installer** — `install.sh` теперь показывает текущую и новую версию перед установкой; при повторной установке той же версии спрашивает подтверждение (Reinstall? [y/N]); при апгрейде — Upgrade? [Y/n]; при первой установке — Install? [Y/n]
+- **`configctl xray version`** — команда для проверки версии плагина из терминала OPNsense; возвращает JSON `{"version":"1.10.0"}`
+- **`GET /api/xray/service/version`** — API-эндпоинт для получения версии плагина из GUI или скриптов
+- **`version.txt`** — файл версии записывается при установке в `/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt`; удаляется при uninstall вместе с директорией модели
+
+### Changed
+- `install.sh`: версия обновлена до 1.10.0
+- `xray-service-control.php`: добавлена константа `XRAY_VERSION_FILE` и `case 'version'`
+- `actions_xray.conf`: добавлен action `[version]`
+- `ServiceController.php`: добавлен `versionAction()` (GET, read-only)
+
+---
+
 ## [1.9.3] — 2026-03-05
 
 ### Fixed (Приоритет 1 — баги)
