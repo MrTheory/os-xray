@@ -78,8 +78,8 @@ jobs:
       - name: Generate changelog to release message
         id: changelog
         run: |
-          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/develop/${ARCHIVE_NAME}.tar.gz"
-          DOWNLOAD_URL_VER="https://github.com/${GITHUB_REPOSITORY}/releases/download/develop/${ARCHIVE_NAME_VER}.tar.gz"
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/develop-build/${ARCHIVE_NAME}.tar.gz"
+          DOWNLOAD_URL_VER="https://github.com/${GITHUB_REPOSITORY}/releases/download/develop-build/${ARCHIVE_NAME_VER}.tar.gz"
 
           {
             echo "BODY<<EOF"
@@ -101,7 +101,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: develop
+          tag_name: develop-build
           name: "opnsense-xray (Develop branch)"
           body: ${{ steps.changelog.outputs.BODY }}
           draft: false
