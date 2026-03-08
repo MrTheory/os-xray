@@ -44,6 +44,7 @@ jobs:
 
           # Создаём .tar.gz архив
           tar -czf "${ARCHIVE_NAME}.tar.gz" "${ARCHIVE_DIR}"
+          tar -czf "${ARCHIVE_NAME_VER}.tar.gz" "${ARCHIVE_DIR}
 
           echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
