@@ -30,7 +30,8 @@ jobs:
       - name: Prepare build archive
         run: |
           ARCHIVE_DIR="opnsense-xray-develop"
-          ARCHIVE_NAME="opnsense-xray-develop-${{ steps.date.outputs.DATE }}-${{ steps.commit.outputs.SHORT_HASH }}"
+          ARCHIVE_NAME="opnsense-xray-develop"
+          ARCHIVE_NAME_VER="opnsense-xray-develop-${{ steps.date.outputs.DATE }}-${{ steps.commit.outputs.SHORT_HASH }}"
           mkdir -p "${ARCHIVE_DIR}"
 
           # Копируем все файлы, необходимые для установки.
@@ -46,13 +47,21 @@ jobs:
 
           echo "ARCHIVE_DIR=${ARCHIVE_DIR}" >> "$GITHUB_ENV"
           echo "ARCHIVE_NAME=${ARCHIVE_NAME}" >> "$GITHUB_ENV"
+          echo "ARCHIVE_NAME_VER=${ARCHIVE_NAME_VER}" >> "$GITHUB_ENV"
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ env.ARCHIVE_NAME }}.tar.gz
           path: ${{ env.ARCHIVE_NAME }}.tar.gz
-          retention-days: 30
+          retention-days: 7
+
+      - name: Upload versioned artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ env.ARCHIVE_NAME_VER }}
+          path: ${{ env.ARCHIVE_NAME_VER }}.tar.gz
+          retention-days: 14
 
       - name: Display build info
         run: |
@@ -61,4 +70,42 @@ jobs:
           echo "  Commit: ${{ steps.commit.outputs.SHORT_HASH }}"
           echo "  Date: ${{ steps.date.outputs.DATE }}"
           echo "  Archive: ${{ env.ARCHIVE_NAME }}.tar.gz"
+          echo "  Versioned archive: ${{ env.ARCHIVE_NAME_VER }}.tar.gz
           ls -lh "${{ env.ARCHIVE_NAME }}.tar.gz"
+          ls -lh "${{ env.ARCHIVE_NAME_VER }}.tar.gz"
+
+      - name: Generate changelog to release message
+        id: changelog
+        run: |
+          DOWNLOAD_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/develop/${ARCHIVE_NAME}.tar.gz"
+          DOWNLOAD_URL_VER="https://github.com/${GITHUB_REPOSITORY}/releases/download/develop/${ARCHIVE_NAME_VER}.tar.gz"
+
+          {
+            echo ""
+            echo "---"
+            echo "### Manual installation"
+            echo '```sh'
+            echo "fetch -o /tmp/opnsense-xray.tar.gz ${DOWNLOAD_URL_VER}"
+            echo "cd /tmp && tar xzf opnsense-xray.tar.gz"
+            echo "cd opnsense-xray"
+            echo "chmod +x install.sh && sh install.sh"
+            echo '```'
+
+            echo "or non-versioned link ${DOWNLOAD_URL}"
+            
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: latest-dev
+          name: "opnsense-xray (Develop branch)"
+          body: ${{ steps.changelog.outputs.BODY }}
+          draft: false
+          prerelease: true
+          files: |
+            ${{ env.ARCHIVE_NAME }}.tar.gz
+            ${{ env.ARCHIVE_NAME_VER }}.tar.gz
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
