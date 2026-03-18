@@ -150,6 +150,16 @@ class ImportController extends ApiControllerBase
         // Парсим query string
         parse_str($query, $params);
 
+        // P2.5: определяем config_mode ДО санитизации — custom config строится из сырых значений
+        $type     = $params['type']     ?? 'tcp';
+        $security = $params['security'] ?? 'reality';
+        $isWizard = ($type === 'tcp' || $type === '') && $security === 'reality';
+
+        $customConfig = '';
+        if (!$isWizard) {
+            $customConfig = $this->buildCustomConfig($uuid, $host, $port, $params);
+        }
+
         $flow = $params['flow'] ?? '';
         if (empty($flow)) {
             $flow = 'xtls-rprx-vision';
@@ -173,7 +183,7 @@ class ImportController extends ApiControllerBase
         $flow = in_array($flow, $allowedFlow, true) ? $flow : 'xtls-rprx-vision';
         $fp   = in_array($fp,   $allowedFp,   true) ? $fp   : 'chrome';
 
-        return [
+        $result = [
             'uuid'     => $sanitize($uuid),
             'host'     => $sanitize($host),
             'port'     => $port,
@@ -182,9 +192,162 @@ class ImportController extends ApiControllerBase
             'pbk'      => $sanitize($params['pbk']      ?? ''),
             'sid'      => $sanitize($params['sid']      ?? ''),
             'fp'       => $fp,
-            'type'     => $sanitize($params['type']     ?? 'tcp'),
-            'security' => $sanitize($params['security'] ?? 'reality'),
+            'type'     => $sanitize($type),
+            'security' => $sanitize($security),
             'name'     => $name, // уже обработан выше через htmlspecialchars
+            'config_mode' => $isWizard ? 'wizard' : 'custom',
         ];
+
+        if (!$isWizard) {
+            $result['custom_config'] = $customConfig;
+        }
+
+        return $result;
+    }
+
+    /**
+     * P2.5: Генерирует полный xray-core config.json из распарсенных параметров VLESS-ссылки.
+     * Вызывается для ссылок, не совместимых с wizard (type != tcp или security != reality).
+     * Использует RAW-значения (до htmlspecialchars) — json_encode обрабатывает экранирование.
+     */
+    private function buildCustomConfig(string $uuid, string $host, int $port, array $params): string
+    {
+        $type       = $params['type']       ?? 'tcp';
+        $security   = $params['security']   ?? 'none';
+        $encryption = $params['encryption'] ?? 'none';
+        $flow       = $params['flow']       ?? '';
+
+        // XTLS flow работает только с TCP; для остальных транспортов — пустой
+        if ($type !== 'tcp') {
+            $flow = '';
+        }
+
+        $config = [
+            'log' => ['loglevel' => 'warning'],
+            'inbounds' => [[
+                'tag'      => 'socks-in',
+                'port'     => 10808,
+                'listen'   => '127.0.0.1',
+                'protocol' => 'socks',
+                'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => '127.0.0.1'],
+            ]],
+            'outbounds' => [
+                [
+                    'tag'      => 'proxy',
+                    'protocol' => 'vless',
+                    'settings' => [
+                        'vnext' => [[
+                            'address' => $host,
+                            'port'    => $port,
+                            'users'   => [[
+                                'id'         => $uuid,
+                                'encryption' => $encryption,
+                                'flow'       => $flow,
+                            ]],
+                        ]],
+                    ],
+                    'streamSettings' => $this->buildStreamSettings($type, $security, $params),
+                ],
+                ['tag' => 'direct', 'protocol' => 'freedom'],
+            ],
+            'routing' => [
+                'domainStrategy' => 'IPIfNonMatch',
+                'rules' => [[
+                    'type'        => 'field',
+                    'ip'          => ['10.0.0.0/8', '172.16.0.0/12', '192.168.0.0/16'],
+                    'outboundTag' => 'direct',
+                ]],
+            ],
+        ];
+
+        return json_encode($config, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    /**
+     * Собирает streamSettings для xray-core конфига на основе transport type и security.
+     */
+    private function buildStreamSettings(string $type, string $security, array $params): array
+    {
+        $ss = [
+            'network'  => $type,
+            'security' => $security,
+        ];
+
+        // ── Security settings ────────────────────────────────────────────
+        if ($security === 'reality') {
+            $ss['realitySettings'] = [
+                'serverName'  => $params['sni'] ?? '',
+                'fingerprint' => $params['fp']  ?? 'chrome',
+                'show'        => false,
+                'publicKey'   => $params['pbk'] ?? '',
+                'shortId'     => $params['sid'] ?? '',
+                'spiderX'     => $params['spx'] ?? '',
+            ];
+        } elseif ($security === 'tls') {
+            $tls = [
+                'serverName'  => $params['sni'] ?? '',
+                'fingerprint' => $params['fp']  ?? 'chrome',
+            ];
+            if (!empty($params['alpn'])) {
+                $tls['alpn'] = explode(',', $params['alpn']);
+            }
+            $ss['tlsSettings'] = $tls;
+        }
+
+        // ── Transport settings ───────────────────────────────────────────
+        switch ($type) {
+            case 'xhttp':
+                $xhttp = [];
+                if (!empty($params['path'])) $xhttp['path'] = $params['path'];
+                if (!empty($params['host'])) $xhttp['host'] = $params['host'];
+                if (!empty($params['mode'])) $xhttp['mode'] = $params['mode'];
+                if (!empty($xhttp)) $ss['xhttpSettings'] = $xhttp;
+                break;
+
+            case 'ws':
+                $ws = [];
+                if (!empty($params['path'])) $ws['path'] = $params['path'];
+                if (!empty($params['host'])) $ws['headers'] = ['Host' => $params['host']];
+                if (!empty($ws)) $ss['wsSettings'] = $ws;
+                break;
+
+            case 'grpc':
+                $grpc = [];
+                if (!empty($params['serviceName'])) $grpc['serviceName'] = $params['serviceName'];
+                if (!empty($params['mode']))        $grpc['multiMode']   = ($params['mode'] === 'multi');
+                if (!empty($grpc)) $ss['grpcSettings'] = $grpc;
+                break;
+
+            case 'h2':
+            case 'http':
+                $h2 = [];
+                if (!empty($params['path'])) $h2['path'] = $params['path'];
+                if (!empty($params['host'])) $h2['host'] = [$params['host']];
+                if (!empty($h2)) $ss['httpSettings'] = $h2;
+                break;
+
+            case 'kcp':
+                $kcp = [];
+                if (!empty($params['headerType'])) $kcp['header'] = ['type' => $params['headerType']];
+                if (!empty($params['seed']))       $kcp['seed']   = $params['seed'];
+                if (!empty($kcp)) $ss['kcpSettings'] = $kcp;
+                break;
+
+            case 'tcp':
+                if (!empty($params['headerType']) && $params['headerType'] === 'http') {
+                    $tcp = ['header' => ['type' => 'http']];
+                    if (!empty($params['path'])) {
+                        $tcp['header']['request'] = ['path' => explode(',', $params['path'])];
+                    }
+                    if (!empty($params['host'])) {
+                        if (!isset($tcp['header']['request'])) $tcp['header']['request'] = [];
+                        $tcp['header']['request']['headers'] = ['Host' => explode(',', $params['host'])];
+                    }
+                    $ss['tcpSettings'] = $tcp;
+                }
+                break;
+        }
+
+        return $ss;
     }
 }

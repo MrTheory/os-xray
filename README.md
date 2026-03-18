@@ -6,15 +6,16 @@
 [![OPNsense](https://img.shields.io/badge/OPNsense-25.x%20%2F%2026.x-blue)](https://opnsense.org)
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-14.x%20amd64-red)](https://freebsd.org)
 
-**Xray-core (VLESS+Reality) VPN plugin for OPNsense** — v1.10.0
+**Xray-core VPN plugin for OPNsense** — v2.0.0
 
-Xray-core с протоколом VLESS+Reality + tun2socks — нативный VPN-клиент для OPNsense с поддержкой селективной маршрутизации. Обходит DPI-блокировки за счёт маскировки трафика под легитимный TLS.
+Xray-core + tun2socks — нативный VPN-клиент для OPNsense с поддержкой селективной маршрутизации. VLESS+Reality через визард или произвольный config.json (любой протокол/транспорт). Обходит DPI-блокировки за счёт маскировки трафика под легитимный TLS.
 
 ---
 
 ## Возможности
 
-- Импорт VLESS-ссылки одной кнопкой — **Import VLESS link → Parse & Fill**
+- **Custom Config** — два режима: Wizard (VLESS+Reality через GUI-поля) или Custom (произвольный config.json для любого протокола и транспорта)
+- **Импорт VLESS-ссылки** одной кнопкой — автоматически определяет wizard или custom режим; для xhttp, ws, grpc, h2, kcp генерирует полный config.json
 - Полная поддержка параметров VLESS+Reality (UUID, flow, SNI, PublicKey, ShortID, Fingerprint)
 - Управление туннелем через GUI: **VPN → Xray**
 - При установке автоматически определяет и импортирует существующий конфиг xray-core и tun2socks
@@ -53,7 +54,7 @@ Firewall Rules (селективная маршрутизация)
 |------------|-------------------------|
 | OPNsense   | 25.x / 26.x             |
 | FreeBSD    | 14.x amd64              |
-| xray-core  | Любая актуальная        |
+| xray-core  | 24.x+ (рекомендуется)   |
 | tun2socks  | Любая актуальная        |
 
 ---
@@ -80,6 +81,7 @@ sh install.sh
 Установщик автоматически:
 
 - Покажет текущую и новую версию плагина и запросит подтверждение
+- Проверит версию xray-core — если ниже 24.x, предложит автоматическое обновление
 - Проверит наличие бинарников xray-core и tun2socks — если их нет, выведет ссылки для скачивания
 - Проверит, не занят ли SOCKS5-порт (10808 по умолчанию) другим процессом
 - Найдёт существующие конфиги и импортирует их в OPNsense (поля в GUI заполнятся сразу)
@@ -98,9 +100,12 @@ configctl xray version
 Обнови браузер (`Ctrl+F5`) → **VPN → Xray**
 
 1. Вкладка **Instance** → кнопка **Import VLESS link** → вставь ссылку → **Parse & Fill**
+   - Для стандартных VLESS+Reality (TCP) ссылок → автоматически заполнит wizard-поля
+   - Для ссылок с другим транспортом (xhttp, ws, grpc, h2, kcp) → автоматически сгенерирует Custom Config JSON
 2. *(Опционально)* Поле **Bypass Networks** — укажи сети, которые должны идти в обход VPN (по умолчанию: частные сети 10/8, 172.16/12, 192.168/16)
-3. Вкладка **General** → установи галку **Enable Xray** (и **Enable Watchdog** по желанию)
-4. Нажми **Apply**
+3. *(Опционально)* **Config Mode** → Custom — для ручной вставки произвольного config.json (любой протокол/транспорт xray-core)
+4. Вкладка **General** → установи галку **Enable Xray** (и **Enable Watchdog** по желанию)
+5. Нажми **Apply**
 5. Кнопка **Test Connection** — убедись, что туннель работает (показывает HTTP 200)
 6. Кнопка **Validate Config** — проверить конфиг без перезапуска сервиса
 
@@ -382,7 +387,7 @@ os-xray/
     └── mvc/app/
         ├── models/OPNsense/Xray/
         │   ├── General.xml / General.php       ← модель: enable, watchdog (v1.0.1)
-        │   ├── Instance.xml / Instance.php     ← модель: параметры подключения (v1.0.4)
+        │   ├── Instance.xml / Instance.php     ← модель: параметры подключения (v1.0.5)
         │   ├── ACL/ACL.xml                     ← права доступа (page-vpn-xray)
         │   └── Menu/Menu.xml                   ← пункт меню VPN → Xray
         ├── controllers/OPNsense/Xray/
@@ -429,6 +434,7 @@ install -m 0755 /tmp/tun2socks-freebsd-amd64 /usr/local/tun2socks/tun2socks
 
 | Версия | Что изменилось |
 |--------|---------------|
+| 2.0.0  | Custom Config (wizard/custom), Import VLESS с авто-генерацией config.json для любого транспорта, нормализация xhttp↔splithttp, проверка версии xray-core при установке |
 | 1.10.0 | Проверка версии при установке, `configctl xray version`, API version endpoint, Outbound NAT в README |
 | 1.9.3  | Фиксы P1 (implode, socks5_port, validate tempfile, дедупликация), Bypass Networks, Copy Debug Info, Ping RTT, автообновление Diagnostics |
 | 1.9.2  | Фикс fatal error tun2socks при stop, ротация watchdog лога |

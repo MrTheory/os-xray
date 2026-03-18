@@ -5,6 +5,31 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [2.0.0] — 2026-03-19
+
+### Added
+- **Custom Config Mode** — новый режим `config_mode` (wizard/custom) в Instance.xml (v1.0.5): wizard — GUI-поля VLESS+Reality (как раньше), custom — произвольный config.json для любого протокола и транспорта xray-core
+- **Поле `custom_config`** в Instance.xml — текстовое поле для вставки полного config.json
+- **Import VLESS с авто-генерацией Custom Config** — ImportController автоматически определяет wizard/custom режим по транспорту и security; для non-wizard комбинаций (xhttp, ws, grpc, h2, kcp, tcp+tls) генерирует полный config.json через `buildCustomConfig()` и `buildStreamSettings()`
+- **Нормализация транспорта** — `xray_normalize_transport()` автоматически заменяет xhttp↔splithttp в зависимости от версии xray-core (1.x использует splithttp, 24.x+ использует xhttp)
+- **Проверка версии xray-core в install.sh** — при установке проверяется версия xray-core; если < 24.x, предлагается автоматическое обновление с GitHub Releases
+- Тестовые VLESS-ссылки для custom-транспортов в `fixtures/vless_links.php` (секция `custom`)
+
+### Changed
+- `install.sh`: версия обновлена до 2.0.0
+- `xray-service-control.php`: `xray_get_config()` читает `config_mode` и `custom_config`; `xray_write_config()` и `case 'validate'` ветвятся по config_mode; добавлена `xray_normalize_transport()`
+- `ImportController.php`: `parseVless()` возвращает `config_mode` и `custom_config` в результате; добавлены `buildCustomConfig()` и `buildStreamSettings()`
+- `general.volt`: `toggleConfigMode()` показывает/скрывает wizard-поля; Import handler ветвится по config_mode; поддержка Custom Config textarea
+- `forms/instance.xml`: добавлена секция Config Mode с dropdown и textbox
+- `bootstrap.php`: MockConfigObject обновлён полями config_mode и custom_config
+- Instance.xml: версия модели 1.0.4 → 1.0.5
+
+### Tests
+- 13 новых тестов: config_mode/custom_config в getConfig, writeConfig для custom и wizard режимов, Import с определением wizard/custom, генерация custom config JSON, валидация inbound/routing в custom config
+- ModelValidationTest: версия модели проверяется как 1.0.5+
+
+---
+
 ## [1.10.0] — 2026-03-06
 
 ### Added

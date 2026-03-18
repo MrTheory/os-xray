@@ -59,6 +59,8 @@ function xray_get_config(): array
         'mtu'          => (int)(string)($inst->mtu            ?? 1500),
         'loglevel'     => $loglevel,
         'bypass_networks' => (string)($inst->bypass_networks ?? '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16') ?: '10.0.0.0/8,172.16.0.0/12,192.168.0.0/16',
+        'config_mode'    => (string)($inst->config_mode ?? 'wizard') ?: 'wizard',
+        'custom_config'  => (string)($inst->custom_config ?? ''),
     ];
 }
 
@@ -124,18 +126,58 @@ function xray_build_config_array(array $c): array
     ];
 }
 
+// ─── P2.5: xhttp/splithttp compatibility ─────────────────────────────────────
+/**
+ * xray-core 1.8.x знает транспорт как "splithttp" (добавлен в 1.8.13).
+ * В xray-core 24.x он переименован в "xhttp" (splithttp всё ещё работает как alias).
+ * VLESS-ссылки используют type=xhttp. Если установлен xray-core 1.x — нормализуем.
+ */
+function xray_normalize_transport(string $json): string
+{
+    if (!file_exists(XRAY_BIN)) {
+        return $json;
+    }
+    exec(escapeshellarg(XRAY_BIN) . ' version 2>/dev/null', $out);
+    $verLine = $out[0] ?? '';
+
+    // Xray 1.x.x → старая схема именования, xhttp не поддерживается
+    if (preg_match('/Xray\s+1\./', $verLine)) {
+        $json = str_replace('"xhttp"', '"splithttp"', $json);
+        $json = str_replace('"xhttpSettings"', '"splithttpSettings"', $json);
+    }
+
+    return $json;
+}
+
 // ─── Write xray config.json ───────────────────────────────────────────────────
 function xray_write_config(array $c): void
 {
-    $cfg = xray_build_config_array($c);
-
     if (!is_dir(XRAY_CONF_DIR)) {
         mkdir(XRAY_CONF_DIR, 0750, true);
     }
-    file_put_contents(
-        XRAY_CONF,
-        json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-    );
+
+    if (($c['config_mode'] ?? 'wizard') === 'custom') {
+        // Custom Config mode: пишем пользовательский JSON as-is.
+        // json_decode + json_encode для валидации и нормализации форматирования.
+        $raw = trim($c['custom_config'] ?? '');
+        if ($raw === '') {
+            echo "ERROR: custom_config is empty\n";
+            return;
+        }
+        $decoded = json_decode($raw, true);
+        if ($decoded === null) {
+            echo "ERROR: custom_config is not valid JSON\n";
+            return;
+        }
+        $json = json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+        // P2.5: нормализуем xhttp↔splithttp для совместимости с установленной версией xray-core
+        $json = xray_normalize_transport($json);
+    } else {
+        $cfg = xray_build_config_array($c);
+        $json = json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    }
+
+    file_put_contents(XRAY_CONF, $json);
     chmod(XRAY_CONF, 0640);
 }
 
@@ -525,12 +567,28 @@ switch ($action) {
         $tmpConf = $tmpBase . '.json';
         @unlink($tmpBase); // удаляем файл-сироту от tempnam()
         try {
-            // P1-BUG3 FIX: используем xray_build_config_array() вместо дублирования структуры
-            $cfg = xray_build_config_array($c);
-            file_put_contents(
-                $tmpConf,
-                json_encode($cfg, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE)
-            );
+            if (($c['config_mode'] ?? 'wizard') === 'custom') {
+                // Custom Config mode: валидируем пользовательский JSON
+                $raw = trim($c['custom_config'] ?? '');
+                if ($raw === '') {
+                    echo "ERROR: custom_config is empty\n";
+                    exit(1);
+                }
+                $decoded = json_decode($raw, true);
+                if ($decoded === null) {
+                    echo "ERROR: custom_config is not valid JSON\n";
+                    exit(1);
+                }
+                $json = json_encode($decoded, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+                $json = xray_normalize_transport($json);
+            } else {
+                // P1-BUG3 FIX: используем xray_build_config_array() вместо дублирования структуры
+                $json = json_encode(
+                    xray_build_config_array($c),
+                    JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE
+                );
+            }
+            file_put_contents($tmpConf, $json);
             chmod($tmpConf, 0600);
             if (xray_validate_config($tmpConf)) {
                 echo "OK: config is valid\n";

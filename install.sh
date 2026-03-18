@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="1.10.0"
+PLUGIN_VERSION="2.0.0"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
@@ -376,15 +376,73 @@ echo ""
 echo "==> Step 1: Checking binaries..."
 BINARIES_OK=1
 
+XRAY_NEEDS_INSTALL=0
+XRAY_NEEDS_UPGRADE=0
+
 if [ ! -f /usr/local/bin/xray-core ]; then
     warn "xray-core NOT found at /usr/local/bin/xray-core"
-    echo "       Download: https://github.com/XTLS/Xray-core/releases"
-    echo "       fetch -o /tmp/xray.zip <URL-for-Xray-freebsd-64.zip>"
-    echo "       cd /tmp && unzip xray.zip xray && install -m 0755 xray /usr/local/bin/xray-core"
     BINARIES_OK=0
+    XRAY_NEEDS_INSTALL=1
 else
     XRAY_VER=$(/usr/local/bin/xray-core version 2>/dev/null | head -1 || echo 'unknown')
     echo "[OK]  xray-core: $XRAY_VER"
+    # P2.5: xray-core 1.x не поддерживает xhttp+Reality (Custom Config).
+    # Рекомендуем 24.x+ для полной совместимости со всеми протоколами.
+    case "$XRAY_VER" in
+        *" 1."*)
+            echo ""
+            warn "xray-core 1.x detected. Version 24.x+ is recommended."
+            warn "Custom Config (xhttp, splithttp+Reality) requires 24.x+."
+            XRAY_NEEDS_UPGRADE=1
+            ;;
+    esac
+fi
+
+# Предложить установку или обновление xray-core
+if [ "$XRAY_NEEDS_INSTALL" = "1" ] || [ "$XRAY_NEEDS_UPGRADE" = "1" ]; then
+    echo ""
+    if [ "$XRAY_NEEDS_INSTALL" = "1" ]; then
+        printf "  Download and install xray-core (latest)? [Y/n] "
+    else
+        printf "  Upgrade xray-core to latest version? [Y/n] "
+    fi
+    read -r _XRAY_CONFIRM < /dev/tty 2>/dev/null || _XRAY_CONFIRM="y"
+    case "$_XRAY_CONFIRM" in
+        [nN]*)
+            if [ "$XRAY_NEEDS_INSTALL" = "1" ]; then
+                echo "  Skipped. Install manually:"
+                echo "    fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip"
+                echo "    cd /tmp && unzip xray.zip xray && install -m 0755 xray /usr/local/bin/xray-core"
+            else
+                echo "  Skipped. Upgrade manually when ready."
+            fi
+            ;;
+        *)
+            echo "  Downloading latest xray-core..."
+            if fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip 2>/dev/null; then
+                # Останавливаем xray если запущен (перед заменой бинарника)
+                if [ -f /var/run/xray_core.pid ]; then
+                    _PID=$(cat /var/run/xray_core.pid 2>/dev/null || echo "0")
+                    if kill -0 "$_PID" 2>/dev/null; then
+                        echo "  Stopping running xray-core..."
+                        /usr/local/bin/xray-core 2>/dev/null || true
+                        kill "$_PID" 2>/dev/null || true
+                        sleep 1
+                    fi
+                fi
+                cd /tmp && unzip -o xray.zip xray 2>/dev/null && install -m 0755 /tmp/xray /usr/local/bin/xray-core
+                rm -f /tmp/xray.zip /tmp/xray
+                XRAY_VER=$(/usr/local/bin/xray-core version 2>/dev/null | head -1 || echo 'unknown')
+                echo "  [OK]  xray-core updated: $XRAY_VER"
+                BINARIES_OK=1
+                XRAY_NEEDS_INSTALL=0
+                XRAY_NEEDS_UPGRADE=0
+            else
+                warn "Download failed. Check internet connection."
+                warn "Install manually: fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip"
+            fi
+            ;;
+    esac
 fi
 
 if [ ! -f /usr/local/tun2socks/tun2socks ]; then

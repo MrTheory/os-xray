@@ -10,6 +10,45 @@
         mapDataToFormUI({'frm_instance_settings': "/api/xray/instance/get"}).done(function () {
             formatTokenizersUI();
             $('.selectpicker').selectpicker('refresh');
+            toggleConfigMode();
+        });
+
+        // ── P2.5: Config Mode toggle ─────────────────────────────────
+        // Wizard-поля скрываются в Custom mode, textarea показывается.
+        // Секции Tunnel и Routing видны всегда (tun2socks нужны эти поля).
+        function toggleConfigMode() {
+            var mode = $('#instance\\.config_mode').val();
+            // Wizard-only headers: точное совпадение текста через filter()
+            // OPNsense base_form рендерит headers как <td colspan="2"><b>Label</b></td>
+            var $wizardHeaders = $('td[colspan="2"] b').filter(function () {
+                var t = $(this).text().trim();
+                return t === 'Server' || t === 'Reality Settings';
+            }).closest('tr');
+            // Поля wizard-секций
+            var wizardFields = [
+                'instance.server_address', 'instance.server_port', 'instance.uuid',
+                'instance.flow', 'instance.reality_sni', 'instance.reality_pubkey',
+                'instance.reality_shortid', 'instance.reality_fingerprint'
+            ];
+            var $customConfig = $('[id="instance.custom_config"]').closest('tr');
+
+            if (mode === 'custom') {
+                $.each(wizardFields, function (_, fieldId) {
+                    $('[id="' + fieldId + '"]').closest('tr').hide();
+                });
+                $wizardHeaders.hide();
+                $customConfig.show();
+            } else {
+                $.each(wizardFields, function (_, fieldId) {
+                    $('[id="' + fieldId + '"]').closest('tr').show();
+                });
+                $wizardHeaders.show();
+                $customConfig.hide();
+            }
+        }
+
+        $(document).on('change', '#instance\\.config_mode', function () {
+            toggleConfigMode();
         });
 
         // ── Apply ─────────────────────────────────────────────────────
@@ -195,30 +234,50 @@
                         alert("{{ lang._('Parse error:') }} " + (data.message || 'unknown'));
                         return;
                     }
-                    var map = {
-                        'instance.server_address':      data.host  || '',
-                        'instance.server_port':         data.port  || 443,
-                        'instance.uuid':                data.uuid  || '',
-                        'instance.flow':                data.flow  || 'xtls-rprx-vision',
-                        'instance.reality_sni':         data.sni   || '',
-                        'instance.reality_pubkey':      data.pbk   || '',
-                        'instance.reality_shortid':     data.sid   || '',
-                        'instance.reality_fingerprint': data.fp    || 'chrome'
-                    };
-                    $.each(map, function (id, val) {
-                        var $el = $('[id="' + id + '"]');
-                        if ($el.is('select')) {
-                            $el.val(val).trigger('change');
-                            if ($.fn.selectpicker) { $el.selectpicker('refresh'); }
-                        } else {
-                            $el.val(val);
-                        }
-                    });
-                    $("#importModal").modal('hide');
-                    $('a[href="#instance"]').tab('show');
-                    setTimeout(function () {
-                        alert("{{ lang._('Imported! Review fields and click Apply.') }}");
-                    }, 400);
+
+                    var $modeSelect = $('#instance\\.config_mode');
+
+                    if (data.config_mode === 'custom') {
+                        // P2.5: нестандартный transport/security → custom config
+                        $modeSelect.val('custom').trigger('change');
+                        if ($.fn.selectpicker) { $modeSelect.selectpicker('refresh'); }
+                        $('[id="instance.custom_config"]').val(data.custom_config || '');
+                        toggleConfigMode();
+                        $("#importModal").modal('hide');
+                        $('a[href="#instance"]').tab('show');
+                        setTimeout(function () {
+                            alert("{{ lang._('Imported as Custom Config (non-standard transport). Review the JSON and click Apply.') }}");
+                        }, 400);
+                    } else {
+                        // Wizard mode: заполняем поля как раньше
+                        var map = {
+                            'instance.server_address':      data.host  || '',
+                            'instance.server_port':         data.port  || 443,
+                            'instance.uuid':                data.uuid  || '',
+                            'instance.flow':                data.flow  || 'xtls-rprx-vision',
+                            'instance.reality_sni':         data.sni   || '',
+                            'instance.reality_pubkey':      data.pbk   || '',
+                            'instance.reality_shortid':     data.sid   || '',
+                            'instance.reality_fingerprint': data.fp    || 'chrome'
+                        };
+                        $.each(map, function (id, val) {
+                            var $el = $('[id="' + id + '"]');
+                            if ($el.is('select')) {
+                                $el.val(val).trigger('change');
+                                if ($.fn.selectpicker) { $el.selectpicker('refresh'); }
+                            } else {
+                                $el.val(val);
+                            }
+                        });
+                        $modeSelect.val('wizard').trigger('change');
+                        if ($.fn.selectpicker) { $modeSelect.selectpicker('refresh'); }
+                        toggleConfigMode();
+                        $("#importModal").modal('hide');
+                        $('a[href="#instance"]').tab('show');
+                        setTimeout(function () {
+                            alert("{{ lang._('Imported! Review fields and click Apply.') }}");
+                        }, 400);
+                    }
                 },
                 error: function (xhr) {
                     $btn.prop('disabled', false);

@@ -2,9 +2,22 @@
 <model>
     <mount>//OPNsense/xray/instance</mount>
     <description>Xray Instance Settings</description>
-    <!-- v1.0.4: bypass_networks — пользовательский CIDR-список сетей, идущих в обход VPN (direct routing) -->
-    <version>1.0.4</version>
+    <!-- v1.0.5: config_mode + custom_config — поддержка произвольного xray-core config.json (Custom Config mode) -->
+    <version>1.0.5</version>
     <items>
+        <!-- v1.0.5: config_mode — переключатель Wizard (VLESS+Reality GUI) / Custom (raw JSON).
+             custom_config — textarea для произвольного xray-core config.json. -->
+        <config_mode type="OptionField">
+            <Default>wizard</Default>
+            <OptionValues>
+                <wizard>Wizard (VLESS+Reality)</wizard>
+                <custom>Custom JSON</custom>
+            </OptionValues>
+        </config_mode>
+        <custom_config type="TextField">
+            <Required>N</Required>
+            <Default></Default>
+        </custom_config>
         <!-- v1.0.0: добавлена валидация UUID (Mask) и server_address (Mask) -->
         <!-- v1.0.1: исправлен loglevel — тег-ключ <e> заменён на <loglevel_error>;
              нормализация в "error" — в xray-service-control.php; обратная совместимость с "e" сохранена -->

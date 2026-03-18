@@ -1,6 +1,25 @@
 <form>
     <field>
         <type>header</type>
+        <label>Config Mode</label>
+    </field>
+    <field>
+        <id>instance.config_mode</id>
+        <label>Mode</label>
+        <type>dropdown</type>
+        <help>Wizard: configure VLESS+Reality via GUI fields. Custom: paste your own xray-core config.json (supports any protocol).</help>
+        <hint>Use Custom for VMess, Trojan, Shadowsocks, or advanced multi-outbound setups</hint>
+    </field>
+    <field>
+        <id>instance.custom_config</id>
+        <label>Custom Config JSON</label>
+        <type>textbox</type>
+        <help>Paste your full xray-core config.json here. This JSON will be written as-is. Make sure the SOCKS5 inbound port matches the "SOCKS5 Port" field below — tun2socks needs it.</help>
+        <hint>Full xray-core config.json (must be valid JSON)</hint>
+        <style>xray-custom-config</style>
+    </field>
+    <field>
+        <type>header</type>
         <label>Server</label>
     </field>
     <field>
