@@ -18,7 +18,7 @@
 set -e
 set -u
 
-PLUGIN_VERSION="2.0.0"
+PLUGIN_VERSION="3.0.0"
 PLUGIN_DIR="$(dirname "$0")/plugin"
 VERSION_FILE="/usr/local/opnsense/mvc/app/models/OPNsense/Xray/version.txt"
 
@@ -34,6 +34,16 @@ die()  { echo "[ERROR] $*" >&2; exit 1; }
 if [ "${1:-}" = "uninstall" ]; then
     echo "==> Stopping services..."
     /usr/local/opnsense/scripts/Xray/xray-service-control.php stop 2>/dev/null || true
+
+    echo "==> Cleaning runtime files..."
+    # v2.0.0: per-instance PID, lock, flag, config files
+    rm -f /var/run/xray_core_*.pid /var/run/tun2socks_*.pid
+    rm -f /var/run/xray_start_*.lock /var/run/xray_stopped_*.flag
+    rm -f /usr/local/etc/xray-core/config-*.json
+    rm -f /usr/local/tun2socks/config-*.yaml
+    # v1.x legacy files
+    rm -f /var/run/xray_core.pid /var/run/tun2socks.pid
+    rm -f /var/run/xray_start.lock /var/run/xray_stopped.flag
 
     echo "==> Removing plugin files..."
     rm -f  /usr/local/opnsense/scripts/Xray/xray-service-control.php
@@ -82,8 +92,18 @@ fi
 # Control-chars в значениях фильтруются перед записью в shell-файл.
 # ─────────────────────────────────────────────────────────────────────────────
 detect_existing() {
-    XRAY_JSON="/usr/local/etc/xray-core/config.json"
-    T2S_YAML="/usr/local/tun2socks/config.yaml"
+    # v2.0.0: per-instance configs (config-<uuid>.json), fallback to old single config.json
+    XRAY_JSON=""
+    for _F in /usr/local/etc/xray-core/config-*.json /usr/local/etc/xray-core/config.json; do
+        [ -f "$_F" ] && XRAY_JSON="$_F" && break
+    done
+    XRAY_JSON="${XRAY_JSON:-/usr/local/etc/xray-core/config.json}"
+
+    T2S_YAML=""
+    for _F in /usr/local/tun2socks/config-*.yaml /usr/local/tun2socks/config.yaml; do
+        [ -f "$_F" ] && T2S_YAML="$_F" && break
+    done
+    T2S_YAML="${T2S_YAML:-/usr/local/tun2socks/config.yaml}"
 
     # Явная инициализация (set -u не допускает необъявленных переменных)
     EXIST_SERVER=""
@@ -295,22 +315,36 @@ if (!isset($obj->OPNsense))       { $obj->addChild('OPNsense'); }
 if (!isset($obj->OPNsense->xray)) { $obj->OPNsense->addChild('xray'); }
 $x = $obj->OPNsense->xray;
 if (!isset($x->general))          { $x->addChild('general'); }
-if (!isset($x->instance))         { $x->addChild('instance'); }
+
+// v2.0.0: ArrayField — instances (plural) с instance (child) с uuid-атрибутом
+if (!isset($x->instances))        { $x->addChild('instances'); }
+$inst = $x->instances->addChild('instance');
+// Генерируем UUID для OPNsense BaseModel (атрибут инстанса, не VLESS UUID)
+$instUuid = sprintf(
+    '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+    mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+    mt_rand(0, 0xffff),
+    mt_rand(0, 0x0fff) | 0x4000,
+    mt_rand(0, 0x3fff) | 0x8000,
+    mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+);
+$inst->addAttribute('uuid', $instUuid);
 
 $x->general->enabled    = '1';
-$i = $x->instance;
-$i->server_address      = $d['server'];
-$i->server_port         = (string)$d['port'];
-$i->uuid                = $d['uuid'];
-$i->flow                = $d['flow'];
-$i->reality_sni         = $d['sni'];
-$i->reality_pubkey      = $d['pubkey'];
-$i->reality_shortid     = $d['shortid'];
-$i->reality_fingerprint = $d['fp'];
-$i->socks5_port         = (string)$d['socks5'];
-$i->tun_interface       = $d['tun'];
-$i->mtu                 = (string)$d['mtu'];
-$i->loglevel            = 'warning';
+$inst->addChild('name',                'default');
+$inst->addChild('server_address',      $d['server']);
+$inst->addChild('server_port',         (string)$d['port']);
+$inst->addChild('vless_uuid',          $d['uuid']);
+$inst->addChild('flow',                $d['flow']);
+$inst->addChild('reality_sni',         $d['sni']);
+$inst->addChild('reality_pubkey',      $d['pubkey']);
+$inst->addChild('reality_shortid',     $d['shortid']);
+$inst->addChild('reality_fingerprint', $d['fp']);
+$inst->addChild('socks5_port',         (string)$d['socks5']);
+$inst->addChild('tun_interface',       $d['tun']);
+$inst->addChild('mtu',                 (string)$d['mtu']);
+$inst->addChild('loglevel',            'warning');
+$inst->addChild('config_mode',         'wizard');
 
 $cfg->save();
 echo "Config imported OK\n";
@@ -421,15 +455,16 @@ if [ "$XRAY_NEEDS_INSTALL" = "1" ] || [ "$XRAY_NEEDS_UPGRADE" = "1" ]; then
             echo "  Downloading latest xray-core..."
             if fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip 2>/dev/null; then
                 # Останавливаем xray если запущен (перед заменой бинарника)
-                if [ -f /var/run/xray_core.pid ]; then
-                    _PID=$(cat /var/run/xray_core.pid 2>/dev/null || echo "0")
+                # v2.0.0: per-instance PID files (xray_core_*.pid)
+                for _PIDFILE in /var/run/xray_core_*.pid /var/run/xray_core.pid; do
+                    [ -f "$_PIDFILE" ] || continue
+                    _PID=$(cat "$_PIDFILE" 2>/dev/null || echo "0")
                     if kill -0 "$_PID" 2>/dev/null; then
-                        echo "  Stopping running xray-core..."
-                        /usr/local/bin/xray-core 2>/dev/null || true
+                        echo "  Stopping running xray-core (PID $_PID)..."
                         kill "$_PID" 2>/dev/null || true
-                        sleep 1
                     fi
-                fi
+                done
+                sleep 1
                 cd /tmp && unzip -o xray.zip xray 2>/dev/null && install -m 0755 /tmp/xray /usr/local/bin/xray-core
                 rm -f /tmp/xray.zip /tmp/xray
                 XRAY_VER=$(/usr/local/bin/xray-core version 2>/dev/null | head -1 || echo 'unknown')
@@ -490,11 +525,16 @@ echo "==> Step 2.5: Checking SOCKS5 port availability..."
 _CHECK_PORT="${EXIST_SOCKS5:-10808}"
 
 # Если xray-core уже запущен — он сам держит порт, предупреждение лишнее
+# v2.0.0: per-instance PID files
 _XRAY_RUNNING=0
-if [ -f /var/run/xray_core.pid ]; then
-    _XRAY_PID=$(cat /var/run/xray_core.pid 2>/dev/null || echo "0")
-    kill -0 "$_XRAY_PID" 2>/dev/null && _XRAY_RUNNING=1 || true
-fi
+for _PIDFILE in /var/run/xray_core_*.pid /var/run/xray_core.pid; do
+    [ -f "$_PIDFILE" ] || continue
+    _XRAY_PID=$(cat "$_PIDFILE" 2>/dev/null || echo "0")
+    if kill -0 "$_XRAY_PID" 2>/dev/null; then
+        _XRAY_RUNNING=1
+        break
+    fi
+done
 
 if [ "$_XRAY_RUNNING" = "1" ]; then
     echo "[SKIP] xray-core is running — port ${_CHECK_PORT} is held by xray itself."
@@ -590,17 +630,35 @@ echo ""
 echo "==> Step 4: Importing existing config (if found)..."
 
 CONFIG_XML_HAS_XRAY=0
+NEEDS_MIGRATION=0
 _PHP_OUT=$(php -r '
 set_include_path("/usr/local/etc/inc" . PATH_SEPARATOR . get_include_path());
 require_once("config.inc");
 $cfg = OPNsense\Core\Config::getInstance()->object();
+
+// v2.0.0: check new ArrayField structure first
+$instances = $cfg->OPNsense->xray->instances ?? null;
+if ($instances) {
+    foreach ($instances->instance as $inst) {
+        if ((string)($inst->server_address ?? "") !== "" || (string)($inst->vless_uuid ?? "") !== "") {
+            echo "new";
+            exit(0);
+        }
+    }
+}
+
+// v1.x: check old single-instance structure (needs migration)
 $inst = $cfg->OPNsense->xray->instance ?? null;
-if ($inst && ((string)($inst->server_address ?? "") !== "" || (string)($inst->uuid ?? "") !== "")) {
-    echo "1";
+if ($inst && ((string)($inst->server_address ?? "") !== "" || (string)($inst->vless_uuid ?? "") !== "" || (string)($inst->uuid ?? "") !== "")) {
+    echo "old";
+    exit(0);
 }
 ' 2>/dev/null) || true
-if [ "$_PHP_OUT" = "1" ]; then
+if [ "$_PHP_OUT" = "new" ]; then
     CONFIG_XML_HAS_XRAY=1
+elif [ "$_PHP_OUT" = "old" ]; then
+    CONFIG_XML_HAS_XRAY=1
+    NEEDS_MIGRATION=1
 fi
 
 if [ "$CONFIG_XML_HAS_XRAY" = "1" ]; then
@@ -610,6 +668,142 @@ elif [ "$HAS_EXISTING_CONFIG" = "1" ]; then
 else
     echo "[SKIP] No existing config to import."
 fi
+
+# ── Шаг 4.5: Миграция v1.x → v3.0.0 (single instance → ArrayField) ─────────
+if [ "$NEEDS_MIGRATION" = "1" ]; then
+    echo ""
+    echo "==> Step 4.5: Migrating config.xml from v1.x to v3.0.0 (ArrayField)..."
+
+    _MIGRATE_OK=$(php << 'PHPEOF'
+<?php
+set_include_path('/usr/local/etc/inc' . PATH_SEPARATOR . get_include_path());
+require_once('config.inc');
+
+$cfg = OPNsense\Core\Config::getInstance();
+$obj = $cfg->object();
+$x   = $obj->OPNsense->xray ?? null;
+if (!$x) { echo "SKIP"; exit(0); }
+
+$old = $x->instance ?? null;
+if (!$old) { echo "SKIP"; exit(0); }
+
+// Уже есть новая структура — не мигрируем
+if (isset($x->instances)) { echo "SKIP"; exit(0); }
+
+// Копируем все поля из старого <instance> в новый <instances><instance uuid="...">
+$instances = $x->addChild('instances');
+$newInst   = $instances->addChild('instance');
+
+// Генерируем UUID
+$instUuid = sprintf(
+    '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+    mt_rand(0, 0xffff), mt_rand(0, 0xffff),
+    mt_rand(0, 0xffff),
+    mt_rand(0, 0x0fff) | 0x4000,
+    mt_rand(0, 0x3fff) | 0x8000,
+    mt_rand(0, 0xffff), mt_rand(0, 0xffff), mt_rand(0, 0xffff)
+);
+$newInst->addAttribute('uuid', $instUuid);
+
+// Копируем дочерние элементы
+$fields = [
+    'name', 'config_mode', 'custom_config',
+    'server_address', 'server_port', 'vless_uuid', 'flow',
+    'reality_sni', 'reality_pubkey', 'reality_shortid', 'reality_fingerprint',
+    'socks5_listen', 'socks5_port', 'tun_interface', 'mtu',
+    'bypass_networks', 'loglevel',
+];
+foreach ($fields as $f) {
+    $val = (string)($old->$f ?? '');
+    if ($val !== '') {
+        $newInst->addChild($f, htmlspecialchars($val, ENT_XML1 | ENT_QUOTES, 'UTF-8'));
+    }
+}
+// v2.0.0: rename old <uuid> to <vless_uuid> (avoid ArrayField UUID conflict)
+$oldUuid = (string)($old->uuid ?? '');
+if ($oldUuid !== '') {
+    $newInst->addChild('vless_uuid', htmlspecialchars($oldUuid, ENT_XML1 | ENT_QUOTES, 'UTF-8'));
+}
+
+// Удаляем старый <instance> (singular)
+$dom = dom_import_simplexml($old);
+$dom->parentNode->removeChild($dom);
+
+$cfg->save();
+echo "OK";
+PHPEOF
+    ) || true
+
+    if [ "$_MIGRATE_OK" = "OK" ]; then
+        echo "[OK]  Migrated v1.x config to v3.0.0 ArrayField format."
+    elif [ "$_MIGRATE_OK" = "SKIP" ]; then
+        echo "[SKIP] Migration not needed."
+    else
+        warn "Migration failed. You may need to re-enter settings in the GUI."
+    fi
+fi
+
+# ── Шаг 4.6: Rename <uuid> → <vless_uuid> in existing v2.0.0 instances ────────
+# Avoids ArrayField UUID attribute conflict with VLESS user UUID field.
+echo ""
+echo "==> Step 4.6: Checking for <uuid> → <vless_uuid> rename..."
+
+_RENAME_OK=$(php << 'PHPEOF'
+<?php
+set_include_path('/usr/local/etc/inc' . PATH_SEPARATOR . get_include_path());
+require_once('config.inc');
+
+$cfg = OPNsense\Core\Config::getInstance();
+$obj = $cfg->object();
+$instances = $obj->OPNsense->xray->instances ?? null;
+if (!$instances) { echo "SKIP"; exit(0); }
+
+$changed = false;
+foreach ($instances->instance as $inst) {
+    $oldVal = (string)($inst->uuid ?? '');
+    $newVal = (string)($inst->vless_uuid ?? '');
+    if ($oldVal !== '' && $newVal === '') {
+        $inst->addChild('vless_uuid', htmlspecialchars($oldVal, ENT_XML1 | ENT_QUOTES, 'UTF-8'));
+        $dom = dom_import_simplexml($inst->uuid);
+        $dom->parentNode->removeChild($dom);
+        $changed = true;
+    }
+}
+
+if ($changed) {
+    $cfg->save();
+    echo "OK";
+} else {
+    echo "SKIP";
+}
+PHPEOF
+) || true
+
+if [ "$_RENAME_OK" = "OK" ]; then
+    echo "[OK]  Renamed <uuid> to <vless_uuid> in config.xml."
+elif [ "$_RENAME_OK" = "SKIP" ]; then
+    echo "[SKIP] No rename needed."
+else
+    warn "Rename failed: $_RENAME_OK"
+fi
+
+# ── Шаг 4.7: Cleanup v1.x/v2.x PID files and stale flags ─────────────────────
+echo ""
+echo "==> Step 4.7: Cleaning up old runtime files..."
+# v3.0.0: старые PID-файлы без UUID — tun2socks и xray-core не будут найдены per-instance stop
+for _OLD_PID in /var/run/xray_core.pid /var/run/tun2socks.pid; do
+    if [ -f "$_OLD_PID" ]; then
+        _PID=$(cat "$_OLD_PID" 2>/dev/null)
+        if [ -n "$_PID" ]; then
+            kill "$_PID" 2>/dev/null || true
+            echo "[OK]  Killed old process (PID=$_PID) from $_OLD_PID"
+        fi
+        rm -f "$_OLD_PID"
+    fi
+done
+# Удаляем stale flags от некорректных UUID (e.g. xray_stopped_1.flag от configd %1)
+rm -f /var/run/xray_stopped_1.flag 2>/dev/null
+echo "[OK]  Old runtime files cleaned."
 
 # ── Шаг 5: Перезапуск configd ─────────────────────────────────────────────────
 echo ""

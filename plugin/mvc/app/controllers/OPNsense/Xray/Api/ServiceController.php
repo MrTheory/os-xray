@@ -7,6 +7,9 @@ use OPNsense\Core\Backend;
 
 /**
  * Service control: start / stop / reconfigure / status / log / testconnect.
+ *
+ * v3.0.0: все service-actions принимают опциональный $uuid инстанса.
+ * Если $uuid пустой — действие применяется ко всем инстансам.
  */
 class ServiceController extends ApiMutableServiceControllerBase
 {
@@ -16,33 +19,35 @@ class ServiceController extends ApiMutableServiceControllerBase
     protected static $internalServiceName     = 'xray';
 
     /**
-     * BUG-12 FIX: возвращает реальный статус выполнения reconfigure.
-     *
-     * До исправления: проверялась только наличие строки "ERROR" в выводе.
-     * Проблема: пустой ответ (configd завис или timeout) возвращал "ok".
-     * После: проверяем наличие маркера успеха "OK" и отсутствие маркеров ошибки.
-     * Также проверяем что вывод не пустой — пустой ответ = нет связи с configd.
+     * Санитизирует UUID аргумент из URL: оставляет только hex-символы и дефисы.
      */
-    public function reconfigureAction()
+    private function sanitizeUuid(string $uuid): string
+    {
+        return preg_replace('/[^0-9a-fA-F\-]/', '', $uuid);
+    }
+
+    /**
+     * BUG-12 FIX: возвращает реальный статус reconfigure.
+     */
+    public function reconfigureAction($uuid = '')
     {
         if (!$this->request->isPost()) {
             return ['result' => 'failed', 'message' => 'POST required'];
         }
 
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray reconfigure' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray reconfigure'));
+        $output  = trim($backend->configdRun($cmd));
 
-        // Пустой ответ — configd не ответил или вернул timeout
         if (empty($output)) {
             return ['result' => 'failed', 'message' => 'No response from configd (timeout or service unavailable)'];
         }
 
-        // Маркеры ошибки: ERROR, failed, или отсутствие маркера OK
-        // xray-service-control.php при успехе выводит "OK" (см. case 'reconfigure':)
         $hasError   = stripos($output, 'ERROR')   !== false
                    || stripos($output, 'failed')  !== false;
-        $hasSuccess = stripos($output, 'OK')      !== false
-                   || stripos($output, 'disabled') !== false; // сервис отключён — тоже корректно
+        $hasSuccess = stripos($output, 'OK')       !== false
+                   || stripos($output, 'disabled') !== false;
 
         if ($hasError || !$hasSuccess) {
             return ['result' => 'failed', 'message' => $output];
@@ -51,10 +56,12 @@ class ServiceController extends ApiMutableServiceControllerBase
         return ['result' => 'ok', 'message' => $output];
     }
 
-    public function statusAction()
+    public function statusAction($uuid = '')
     {
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray status' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $result  = $backend->configdRun('xray status');
+        $result  = $backend->configdRun($cmd);
         $decoded = json_decode($result, true);
         if (json_last_error() === JSON_ERROR_NONE) {
             return $decoded;
@@ -63,18 +70,30 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
-     * E2: POST /api/xray/service/start
-     * Запускает xray-core и tun2socks.
+     * GET /api/xray/service/statusAll — статус всех инстансов.
      */
-    public function startAction()
+    public function statusAllAction()
+    {
+        $backend = new Backend();
+        $result  = $backend->configdRun('xray statusall');
+        $decoded = json_decode($result, true);
+        if (json_last_error() === JSON_ERROR_NONE) {
+            return $decoded;
+        }
+        return ['error' => trim($result)];
+    }
+
+    public function startAction($uuid = '')
     {
         if (!$this->request->isPost()) {
             return ['result' => 'failed', 'message' => 'POST required'];
         }
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray start' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray start'));
+        $output  = trim($backend->configdRun($cmd));
         $failed  = empty($output)
-                || stripos($output, 'ERROR') !== false
+                || stripos($output, 'ERROR')  !== false
                 || stripos($output, 'failed') !== false;
         return [
             'result'  => $failed ? 'failed' : 'ok',
@@ -82,37 +101,32 @@ class ServiceController extends ApiMutableServiceControllerBase
         ];
     }
 
-    /**
-     * E2: POST /api/xray/service/stop
-     * Останавливает xray-core и tun2socks, разрушает TUN-интерфейс.
-     */
-    public function stopAction()
+    public function stopAction($uuid = '')
     {
         if (!$this->request->isPost()) {
             return ['result' => 'failed', 'message' => 'POST required'];
         }
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray stop' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray stop'));
-        // stop почти всегда успешен; ошибка только если configd не ответил
+        $output  = trim($backend->configdRun($cmd));
         return [
             'result'  => empty($output) ? 'failed' : 'ok',
             'message' => $output ?: 'No response from configd',
         ];
     }
 
-    /**
-     * E2: POST /api/xray/service/restart
-     * Перезапускает сервисы без записи конфига (в отличие от reconfigure).
-     */
-    public function restartAction()
+    public function restartAction($uuid = '')
     {
         if (!$this->request->isPost()) {
             return ['result' => 'failed', 'message' => 'POST required'];
         }
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray restart' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray restart'));
+        $output  = trim($backend->configdRun($cmd));
         $failed  = empty($output)
-                || stripos($output, 'ERROR') !== false
+                || stripos($output, 'ERROR')  !== false
                 || stripos($output, 'failed') !== false;
         return [
             'result'  => $failed ? 'failed' : 'ok',
@@ -121,12 +135,7 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
-     * BUG-5 FIX: POST /api/xray/service/log
-     *
-     * До исправления: action принимал GET без ограничений — любой авторизованный
-     * пользователь мог получить лог через прямой GET-запрос или CSRF-атаку.
-     * Лог содержит IP-адреса серверов, имена интерфейсов, фрагменты ключей Reality.
-     * После: только POST. Вызовы ajaxGet() → $.post() в general.volt (loadLog).
+     * BUG-5 FIX: POST-only — лог содержит чувствительные данные.
      */
     public function logAction()
     {
@@ -139,10 +148,7 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
-     * BUG-5 FIX: POST /api/xray/service/xraylog
-     * Возвращает последние 200 строк /var/log/xray-core.log.
-     * Ротация: /etc/newsyslog.conf.d/xray.conf (BUG-11 fix).
-     * POST-only по той же причине, что logAction (BUG-5).
+     * BUG-5 FIX: POST-only.
      */
     public function xraylogAction()
     {
@@ -155,19 +161,18 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
-     * E5: POST /api/xray/service/validate
-     * Сухой прогон конфига без перезапуска сервисов.
-     * Генерирует config.json из текущего config.xml и запускает `xray -test`.
-     * Не останавливает и не запускает демонов — безопасная операция.
+     * E5: POST /api/xray/service/validate[/{uuid}]
      */
-    public function validateAction()
+    public function validateAction($uuid = '')
     {
         if (!$this->request->isPost()) {
             return ['result' => 'failed', 'message' => 'POST required'];
         }
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray validate' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray validate'));
-        $ok      = stripos($output, 'OK') !== false
+        $output  = trim($backend->configdRun($cmd));
+        $ok      = stripos($output, 'OK')    !== false
                 && stripos($output, 'ERROR') === false;
         return [
             'result'  => $ok ? 'ok' : 'failed',
@@ -175,12 +180,6 @@ class ServiceController extends ApiMutableServiceControllerBase
         ];
     }
 
-    /**
-     * E4: GET /api/xray/service/diagnostics
-     * Статистика TUN-интерфейса и uptime процессов для панели Diagnostics.
-     * Данные читает xray-ifstats.php через configd.
-     * GET: читаем данные — не модифицируем состояние, GET достаточно.
-     */
     /**
      * GET /api/xray/service/version
      */
@@ -195,10 +194,15 @@ class ServiceController extends ApiMutableServiceControllerBase
         return ['version' => 'unknown'];
     }
 
-    public function diagnosticsAction()
+    /**
+     * E4: GET /api/xray/service/diagnostics[/{uuid}]
+     */
+    public function diagnosticsAction($uuid = '')
     {
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray ifstats' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray ifstats'));
+        $output  = trim($backend->configdRun($cmd));
         if (empty($output)) {
             return ['error' => 'No response from configd'];
         }
@@ -210,20 +214,19 @@ class ServiceController extends ApiMutableServiceControllerBase
     }
 
     /**
-     * I8: POST /api/xray/service/testconnect
-     * Тестирует соединение через SOCKS5 прокси xray-core.
-     * curl --socks5 127.0.0.1:10808 https://1.1.1.1 → http_code 200 = OK.
+     * I8: POST /api/xray/service/testconnect[/{uuid}]
      */
-    public function testconnectAction()
+    public function testconnectAction($uuid = '')
     {
         if (!$this->request->isPost()) {
             return ['result' => 'failed', 'message' => 'POST required'];
         }
 
+        $uuid    = $this->sanitizeUuid((string)$uuid);
+        $cmd     = 'xray testconnect' . ($uuid !== '' ? ' ' . $uuid : '');
         $backend = new Backend();
-        $output  = trim($backend->configdRun('xray testconnect'));
+        $output  = trim($backend->configdRun($cmd));
 
-        // curl выводит http_code (200, 000 при ошибке сети, etc.)
         $httpCode = (int)$output;
         if ($httpCode >= 200 && $httpCode < 400) {
             return [

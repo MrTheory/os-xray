@@ -1,7 +1,14 @@
 <form>
     <field>
         <type>header</type>
-        <label>Config Mode</label>
+        <label>Instance</label>
+    </field>
+    <field>
+        <id>instance.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>Display name for this instance in the table</help>
+        <hint>e.g. default, work, streaming</hint>
     </field>
     <field>
         <id>instance.config_mode</id>
@@ -37,7 +44,7 @@
         <hint>Default: 443 (recommended for Reality)</hint>
     </field>
     <field>
-        <id>instance.uuid</id>
+        <id>instance.vless_uuid</id>
         <label>UUID</label>
         <type>text</type>
         <help>User UUID configured on the server</help>

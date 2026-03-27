@@ -8,7 +8,7 @@
 [![OPNsense](https://img.shields.io/badge/OPNsense-25.x%20%2F%2026.x-blue)](https://opnsense.org)
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-14.x%20amd64-red)](https://freebsd.org)
 
-**Xray-core VPN plugin for OPNsense** — v2.0.0
+**Xray-core VPN plugin for OPNsense** — v3.0.0
 
 Xray-core + tun2socks — native VPN client for OPNsense with selective routing support. VLESS+Reality via wizard or custom config.json (any protocol/transport). Bypasses DPI blocking by disguising traffic as legitimate TLS.
 
@@ -16,15 +16,17 @@ Xray-core + tun2socks — native VPN client for OPNsense with selective routing 
 
 ## Features
 
+- **Multi-instance support** — add, edit and delete multiple VPN instances from a bootgrid table
+- **Per-instance status badges** — each instance row shows xray/tun2socks up/down status, auto-refreshed every 5 seconds
 - **Custom Config** — two modes: Wizard (VLESS+Reality via GUI fields) or Custom (any xray-core config.json for any protocol and transport)
-- **Import VLESS link** with one click — auto-detects wizard or custom mode; generates full config.json for xhttp, ws, grpc, h2, kcp transports
+- **Import VLESS link inside dialog** — collapsible Import panel at the top of the instance edit dialog; Validate Config button in dialog footer; no separate import modal
+- **Import VLESS link** — auto-detects wizard or custom mode; generates full config.json for xhttp, ws, grpc, h2, kcp transports; SOCKS5 address and port from form fields are respected in generated config
 - Full VLESS+Reality parameter support (UUID, flow, SNI, PublicKey, ShortID, Fingerprint)
 - Tunnel management via GUI: **VPN → Xray**
 - Auto-detects and imports existing xray-core and tun2socks configs during installation
 - Compatible with OPNsense selective routing (Firewall Aliases + Rules + Gateway)
-- xray-core and tun2socks service status updates every 5 seconds in GUI
 - **Start / Stop / Restart buttons** — manage the service directly from GUI without page reload
-- **Validate Config button** — dry-run config through `xray -test` without stopping the service
+- **Validate Config button** — dry-run config through `xray -test` without stopping the service (in instance dialog footer)
 - **Test Connection button** — verifies that xray-core is actually proxying traffic
 - **Log tab** — Boot Log and Xray Core Log directly in GUI
 - **Diagnostics tab** — TUN interface stats: IP, MTU, bytes, packets, process uptime, Ping RTT to VPN server; auto-refresh every 30 seconds
@@ -101,15 +103,16 @@ configctl xray version
 
 Refresh browser (`Ctrl+F5`) → **VPN → Xray**
 
-1. **Instance** tab → **Import VLESS link** button → paste link → **Parse & Fill**
-   - For standard VLESS+Reality (TCP) links → automatically fills wizard fields
-   - For links with other transports (xhttp, ws, grpc, h2, kcp) → automatically generates Custom Config JSON
-2. *(Optional)* **Bypass Networks** field — specify networks that should bypass VPN (default: private networks 10/8, 172.16/12, 192.168/16)
-3. *(Optional)* **Config Mode** → Custom — for manually pasting arbitrary config.json (any xray-core protocol/transport)
-4. **General** tab → check **Enable Xray** (and **Enable Watchdog** if desired)
-5. Press **Apply**
-6. **Test Connection** button — verify the tunnel is working (shows HTTP 200)
-7. **Validate Config** button — validate config without restarting the service
+1. **Instances** tab → click **+** to open the instance dialog
+   - Expand the **Import VLESS link** panel at the top of the dialog → paste link → **Parse & Fill**
+     - For standard VLESS+Reality (TCP) links → automatically fills wizard fields
+     - For links with other transports (xhttp, ws, grpc, h2, kcp) → automatically generates Custom Config JSON using SOCKS5 address and port from the form
+   - *(Optional)* **Config Mode** → Custom — for manually pasting arbitrary config.json (any xray-core protocol/transport)
+   - *(Optional)* **Bypass Networks** field — specify networks that should bypass VPN (default: private networks 10/8, 172.16/12, 192.168/16)
+   - **Validate Config** button (dialog footer) — validate config without restarting the service
+2. **General** tab → check **Enable Xray** (and **Enable Watchdog** if desired)
+3. Press **Apply**
+4. **Test Connection** button — verify the tunnel is working (shows HTTP 200)
 
 ---
 
@@ -272,7 +275,7 @@ cat /usr/local/tun2socks/config.yaml
 | `REALITY only supports TCP, H2, gRPC and DomainSocket` | Unsupported transport+security combo | Use Custom Config mode for non-TCP Reality, or change transport/security |
 | `failed to dial` | VPN server unreachable | Check server address and port, test with `ping` or `nc -zv host port` |
 | `address already in use` | SOCKS5 port occupied | `sockstat -4l \| grep 10808` — change port in GUI or stop conflicting process |
-| `unknown config format` | Config file has wrong extension | Should not happen in v2.0.0+ (fixed in v1.9.1) |
+| `unknown config format` | Config file has wrong extension | Should not happen in v3.0.0+ (fixed in v1.9.1) |
 
 #### Network Warnings
 

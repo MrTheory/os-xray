@@ -5,6 +5,37 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [3.0.0] — 2026-03-27
+
+### Added
+- **Multi-instance support** — GUI переведён на UIBootgrid CRUD: добавление, редактирование, удаление инстансов из таблицы
+- **Per-instance service control** — каждый инстанс запускается с отдельным PID-файлом, конфигом, lock-файлом (по UUID)
+- **Import VLESS внутри диалога** — кнопка Import VLESS и кнопка Validate Config перемещены из тулбара вкладки Instances внутрь модального диалога добавления/редактирования инстанса; Import — сворачиваемая панель в верхней части модала, Validate — в футере; отдельный import-модал удалён
+- **Per-instance статус в таблице** — каждая строка инстанса отображает badges xray/tun2socks (up/down) через bootgrid formatter; статус получается из `/api/xray/service/statusall` и автообновляется каждые 5 секунд
+- **Миграция v1.x → v3.0.0** в install.sh: автоматическая конвертация single `<instance>` → ArrayField `<instances><instance uuid="...">`
+- **Миграция v2.x → v3.0.0**: автоматическое переименование `<uuid>` → `<vless_uuid>` (избежание конфликта с UUID ArrayField)
+- **Cleanup старых PID-файлов** в install.sh (шаг 4.7): убивает процессы со старыми путями `/var/run/xray_core.pid`, `/var/run/tun2socks.pid`
+
+### Changed
+- `Instance.xml`: модель v3.0.0, ArrayField, поле `uuid` → `vless_uuid`, wizard-only поля Required=N
+- `InstanceController.php`: полные CRUD-методы с правильными 3-параметровыми вызовами getBase/addBase/setBase
+- `general.volt`: UIBootgrid таблица, per-instance status badges, toggleConfigMode с polling, Import flow — коллапс-панель внутри instance-диалога, Validate — в футере диалога
+- `xray-service-control.php`: per-instance paths, UUID validation (strlen >= 36 для защиты от configd `%1`); custom config использует `socks5_listen`/`socks5_port` из полей формы вместо хардкода `127.0.0.1:10808`
+- `ServiceController.php`: все actions принимают опциональный `$uuid` инстанса
+- `actions_xray.conf`: `%1` для per-instance UUID во всех actions
+- `install.sh`: версия 3.0.0, шаги 4.5/4.6/4.7 для миграции и cleanup
+- `forms/instance.xml`: добавлено поле `instance.name`
+- `ImportController.php`: `uuid` → `vless_uuid` в ответе парсера; server_address заполняется и в custom mode; `extractLink()` переименован в `extractRequestData()` — возвращает структуру с опциональными `socks5_listen`/`socks5_port` из тела запроса
+
+### Fixed
+- **Custom config SOCKS5 settings** — при импорте VLESS-ссылки в режиме custom config, генерируемый config.json теперь использует SOCKS5 Listen Address и Port из полей формы вместо хардкода `127.0.0.1:10808` (issue от yukh975)
+
+### Tests
+- Все 460 тестов обновлены для vless_uuid и ArrayField-структуры
+- ModelValidationTest: version >= 3.0.0, wizard-only поля в optional списке
+
+---
+
 ## [2.0.0] — 2026-03-19
 
 ### Added

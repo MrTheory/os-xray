@@ -12,7 +12,8 @@ class ImportController extends ApiControllerBase
             return ['status' => 'error', 'message' => 'POST required'];
         }
 
-        $link = $this->extractLink();
+        $requestData = $this->extractRequestData();
+        $link = $requestData['link'];
 
         if (empty($link)) {
             return ['status' => 'error', 'message' => 'No VLESS link provided'];
@@ -22,7 +23,20 @@ class ImportController extends ApiControllerBase
             return ['status' => 'error', 'message' => 'Link too long'];
         }
 
-        $data = $this->parseVless($link);
+        // SOCKS5 listen/port from form fields (optional, fallback to model defaults)
+        $socksListen = $requestData['socks5_listen'] ?? '127.0.0.1';
+        $socksPort   = $requestData['socks5_port']   ?? 10808;
+
+        // Validate socks5_listen — must be a valid IPv4
+        if (!filter_var($socksListen, FILTER_VALIDATE_IP, FILTER_FLAG_IPV4)) {
+            $socksListen = '127.0.0.1';
+        }
+        $socksPort = (int)$socksPort;
+        if ($socksPort <= 0 || $socksPort > 65535) {
+            $socksPort = 10808;
+        }
+
+        $data = $this->parseVless($link, $socksListen, $socksPort);
         if (isset($data['error'])) {
             return ['status' => 'error', 'message' => $data['error']];
         }
@@ -32,11 +46,14 @@ class ImportController extends ApiControllerBase
     }
 
     /**
-     * Извлекаем ссылку из запроса всеми возможными способами.
+     * Извлекаем ссылку и доп. параметры из запроса.
      * Браузер может прислать: JSON body, form POST, или base64-encoded.
+     * @return array{link: string, socks5_listen?: string, socks5_port?: int}
      */
-    private function extractLink(): string
+    private function extractRequestData(): array
     {
+        $result = ['link' => ''];
+
         // Способ 1: JSON body ($.ajax contentType: application/json)
         $rawBody = file_get_contents('php://input');
         if (!empty($rawBody)) {
@@ -46,13 +63,19 @@ class ImportController extends ApiControllerBase
                 if (!empty($json['link_b64'])) {
                     $decoded = base64_decode($json['link_b64'], true);
                     if ($decoded !== false) {
-                        return trim($decoded);
+                        $result['link'] = trim($decoded);
                     }
+                } elseif (!empty($json['link'])) {
+                    $result['link'] = trim($json['link']);
                 }
-                // обычный JSON link
-                if (!empty($json['link'])) {
-                    return trim($json['link']);
+                // SOCKS5 settings from form
+                if (isset($json['socks5_listen'])) {
+                    $result['socks5_listen'] = trim((string)$json['socks5_listen']);
                 }
+                if (isset($json['socks5_port'])) {
+                    $result['socks5_port'] = (int)$json['socks5_port'];
+                }
+                return $result;
             }
         }
 
@@ -61,20 +84,32 @@ class ImportController extends ApiControllerBase
         if (!empty($b64)) {
             $decoded = base64_decode($b64, true);
             if ($decoded !== false) {
-                return trim($decoded);
+                $result['link'] = trim($decoded);
             }
         }
 
         // Способ 3: обычный POST link (работает только без & в строке)
-        $link = $this->request->getPost('link', 'string', '');
-        if (!empty($link)) {
-            return trim($link);
+        if (empty($result['link'])) {
+            $link = $this->request->getPost('link', 'string', '');
+            if (!empty($link)) {
+                $result['link'] = trim($link);
+            }
         }
 
-        return '';
+        // SOCKS5 settings from POST form (fallback for non-JSON requests)
+        $postListen = $this->request->getPost('socks5_listen', 'string', '');
+        if (!empty($postListen) && !isset($result['socks5_listen'])) {
+            $result['socks5_listen'] = trim($postListen);
+        }
+        $postPort = $this->request->getPost('socks5_port', 'int', 0);
+        if ($postPort > 0 && !isset($result['socks5_port'])) {
+            $result['socks5_port'] = $postPort;
+        }
+
+        return $result;
     }
 
-    private function parseVless(string $link): array
+    private function parseVless(string $link, string $socksListen = '127.0.0.1', int $socksPort = 10808): array
     {
         // Убираем лишние пробелы и кавычки
         $link = trim($link, " \t\n\r\0\x0B\"'");
@@ -157,7 +192,7 @@ class ImportController extends ApiControllerBase
 
         $customConfig = '';
         if (!$isWizard) {
-            $customConfig = $this->buildCustomConfig($uuid, $host, $port, $params);
+            $customConfig = $this->buildCustomConfig($uuid, $host, $port, $params, $socksListen, $socksPort);
         }
 
         $flow = $params['flow'] ?? '';
@@ -184,7 +219,7 @@ class ImportController extends ApiControllerBase
         $fp   = in_array($fp,   $allowedFp,   true) ? $fp   : 'chrome';
 
         $result = [
-            'uuid'     => $sanitize($uuid),
+            'vless_uuid' => $sanitize($uuid),
             'host'     => $sanitize($host),
             'port'     => $port,
             'flow'     => $flow,
@@ -210,7 +245,7 @@ class ImportController extends ApiControllerBase
      * Вызывается для ссылок, не совместимых с wizard (type != tcp или security != reality).
      * Использует RAW-значения (до htmlspecialchars) — json_encode обрабатывает экранирование.
      */
-    private function buildCustomConfig(string $uuid, string $host, int $port, array $params): string
+    private function buildCustomConfig(string $uuid, string $host, int $port, array $params, string $socksListen = '127.0.0.1', int $socksPort = 10808): string
     {
         $type       = $params['type']       ?? 'tcp';
         $security   = $params['security']   ?? 'none';
@@ -226,10 +261,10 @@ class ImportController extends ApiControllerBase
             'log' => ['loglevel' => 'warning'],
             'inbounds' => [[
                 'tag'      => 'socks-in',
-                'port'     => 10808,
-                'listen'   => '127.0.0.1',
+                'port'     => $socksPort,
+                'listen'   => $socksListen,
                 'protocol' => 'socks',
-                'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => '127.0.0.1'],
+                'settings' => ['auth' => 'noauth', 'udp' => true, 'ip' => $socksListen],
             ]],
             'outbounds' => [
                 [

@@ -1,74 +1,142 @@
 <script>
     $(document).ready(function () {
 
-        // ── Load forms ────────────────────────────────────────────────
+        // ── Helpers ───────────────────────────────────────────────
+        function escAttr(s) {
+            return String(s).replace(/[&"<>]/g, function (c) {
+                return {'&':'&amp;','"':'&quot;','<':'&lt;','>':'&gt;'}[c];
+            });
+        }
+
+        // ── Per-instance status overlay ───────────────────────────
+        var instanceStatusCache = {};
+
+        function refreshInstanceStatus() {
+            ajaxGet('/api/xray/service/statusall', {}, function (data) {
+                if (data.error) return;
+                instanceStatusCache = data;
+                applyStatusToGrid();
+            });
+        }
+
+        function statusBadge(info) {
+            if (!info) return '<span class="label label-default" style="font-size:11px;">--</span>';
+            var xOk = info.xray_core === 'running';
+            var tOk = info.tun2socks === 'running';
+            return '<span class="label ' + (xOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">' +
+                'xray: ' + (xOk ? 'up' : 'down') +
+                '</span> ' +
+                '<span class="label ' + (tOk ? 'label-success' : 'label-danger') + '" style="font-size:11px;">' +
+                'tun: ' + (tOk ? 'up' : 'down') +
+                '</span>';
+        }
+
+        function applyStatusToGrid() {
+            $('#grid-instances .xray-status-cell').each(function () {
+                var uuid = $(this).data('uuid');
+                $(this).html(statusBadge(instanceStatusCache[uuid]));
+            });
+        }
+
+        // ── Instances CRUD table (UIBootgrid) ───────────────────────
+        $('#grid-instances').UIBootgrid({
+            search: '/api/xray/instance/searchItem',
+            get:    '/api/xray/instance/getItem/',
+            set:    '/api/xray/instance/setItem/',
+            add:    '/api/xray/instance/addItem',
+            del:    '/api/xray/instance/delItem/',
+            options: {
+                formatters: {
+                    instanceStatus: function (column, row) {
+                        return '<span class="xray-status-cell" data-uuid="' + escAttr(row.uuid) + '">' +
+                            statusBadge(instanceStatusCache[row.uuid]) + '</span>';
+                    }
+                }
+            }
+        });
+
+        // After grid loads/reloads data, fetch and overlay status
+        $('#grid-instances').on('loaded.rs.jquery.bootgrid', function () {
+            refreshInstanceStatus();
+        });
+
+        // ── General settings form ───────────────────────────────────
         mapDataToFormUI({'frm_general_settings': "/api/xray/general/get"}).done(function () {
             formatTokenizersUI();
             $('.selectpicker').selectpicker('refresh');
         });
 
-        mapDataToFormUI({'frm_instance_settings': "/api/xray/instance/get"}).done(function () {
-            formatTokenizersUI();
-            $('.selectpicker').selectpicker('refresh');
-            toggleConfigMode();
-        });
-
-        // ── P2.5: Config Mode toggle ─────────────────────────────────
-        // Wizard-поля скрываются в Custom mode, textarea показывается.
-        // Секции Tunnel и Routing видны всегда (tun2socks нужны эти поля).
+        // ── Config Mode toggle (wizard ↔ custom) in dialog ─────────
         function toggleConfigMode() {
             var mode = $('#instance\\.config_mode').val();
-            // Wizard-only headers: точное совпадение текста через filter()
-            // OPNsense base_form рендерит headers как <td colspan="2"><b>Label</b></td>
-            var $wizardHeaders = $('td[colspan="2"] b').filter(function () {
+            var $wizardHeaders = $('#DialogInstance td[colspan="2"] b').filter(function () {
                 var t = $(this).text().trim();
                 return t === 'Server' || t === 'Reality Settings';
             }).closest('tr');
-            // Поля wizard-секций
             var wizardFields = [
-                'instance.server_address', 'instance.server_port', 'instance.uuid',
+                'instance.server_address', 'instance.server_port', 'instance.vless_uuid',
                 'instance.flow', 'instance.reality_sni', 'instance.reality_pubkey',
                 'instance.reality_shortid', 'instance.reality_fingerprint'
             ];
-            var $customConfig = $('[id="instance.custom_config"]').closest('tr');
+            var $customConfig = $('#DialogInstance [id="instance.custom_config"]').closest('tr');
 
             if (mode === 'custom') {
                 $.each(wizardFields, function (_, fieldId) {
-                    $('[id="' + fieldId + '"]').closest('tr').hide();
+                    $('#DialogInstance [id="' + fieldId + '"]').closest('tr').hide();
                 });
                 $wizardHeaders.hide();
                 $customConfig.show();
             } else {
                 $.each(wizardFields, function (_, fieldId) {
-                    $('[id="' + fieldId + '"]').closest('tr').show();
+                    $('#DialogInstance [id="' + fieldId + '"]').closest('tr').show();
                 });
                 $wizardHeaders.show();
                 $customConfig.hide();
             }
         }
 
+        // Toggle on mode change
         $(document).on('change', '#instance\\.config_mode', function () {
             toggleConfigMode();
         });
 
-        // ── Apply ─────────────────────────────────────────────────────
+        // Toggle when dialog opens — poll until mapDataToFormUI finishes loading data
+        $('#DialogInstance').on('shown.bs.modal', function () {
+            var attempts = 0;
+            var poller = setInterval(function () {
+                attempts++;
+                var mode = $('#instance\\.config_mode').val();
+                if (mode === 'wizard' || mode === 'custom' || attempts > 20) {
+                    clearInterval(poller);
+                    toggleConfigMode();
+                }
+            }, 100);
+        });
+
+        // ── Apply (save general, then reconfigure) ──────────────────
         $("#reconfigureAct").SimpleActionButton({
             onPreAction: function () {
-                const dfObj = new $.Deferred();
+                var dfObj = new $.Deferred();
                 saveFormToEndpoint("/api/xray/general/set", 'frm_general_settings', function () {
-                    saveFormToEndpoint("/api/xray/instance/set", 'frm_instance_settings', function () {
-                        dfObj.resolve();
-                    });
+                    dfObj.resolve();
                 });
                 return dfObj;
             }
         });
 
-        // ── Status badges ─────────────────────────────────────────────
+        // ── Status badges + per-instance status ───────────────────
         function updateStatus() {
-            ajaxGet("/api/xray/service/status", {}, function (data) {
-                var xok = (data.xray_core === 'running');
-                var tok = (data.tun2socks  === 'running');
+            ajaxGet("/api/xray/service/statusall", {}, function (data) {
+                if (data.error) return;
+                instanceStatusCache = data;
+
+                // Aggregate: any instance running = global running
+                var anyXray = false, anyTun = false;
+                $.each(data, function (uuid, info) {
+                    if (info.xray_core === 'running') anyXray = true;
+                    if (info.tun2socks === 'running') anyTun = true;
+                });
+                var xok = anyXray, tok = anyTun;
                 $('#badge_xray')
                     .removeClass('label-success label-danger label-default')
                     .addClass(xok ? 'label-success' : 'label-danger')
@@ -78,7 +146,9 @@
                     .addClass(tok ? 'label-success' : 'label-danger')
                     .text('tun2socks: ' + (tok ? 'running' : 'stopped'));
 
-                // E2: синхронизируем состояние кнопок с реальным статусом
+                // Update per-instance status in grid
+                applyStatusToGrid();
+
                 var running = xok || tok;
                 $('#btnStart').prop('disabled', running);
                 $('#btnStop').prop('disabled', !running);
@@ -87,14 +157,12 @@
         updateStatus();
         setInterval(updateStatus, 5000);
 
-        // ── E2: Start / Stop / Restart ────────────────────────────────
+        // ── Start / Stop / Restart ──────────────────────────────────
         function serviceAction(action, confirmMsg, callback) {
             if (confirmMsg && !confirm(confirmMsg)) {
                 return;
             }
-            // Блокируем все три кнопки на время запроса
             var $btns = $('#btnStart, #btnStop, #btnRestart').prop('disabled', true);
-            // Показываем спиннер на нажатой кнопке
             var $btn = $('#btn' + action.charAt(0).toUpperCase() + action.slice(1));
             var origHtml = $btn.html();
             $btn.html('<i class="fa fa-spinner fa-spin"></i>');
@@ -108,7 +176,6 @@
                     if (data.result !== 'ok') {
                         alert('{{ lang._("Action failed:") }} ' + (data.message || 'unknown error'));
                     }
-                    // Обновляем статус сразу + после задержки (демон стартует ~1с)
                     setTimeout(function () {
                         updateStatus();
                         $btns.prop('disabled', false);
@@ -126,17 +193,15 @@
         $('#btnStart').click(function () {
             serviceAction('start', null, null);
         });
-
         $('#btnStop').click(function () {
             var confirmStop = '{{ lang._("Stop Xray VPN? Active connections will be terminated.") }}';
             serviceAction('stop', confirmStop, null);
         });
-
         $('#btnRestart').click(function () {
             serviceAction('restart', null, null);
         });
 
-        // ── I8: Test Connection ───────────────────────────────────────
+        // ── Test Connection ─────────────────────────────────────────
         $("#testConnectBtn").click(function () {
             var $btn = $(this).prop('disabled', true);
             var $res = $('#testConnectResult');
@@ -149,9 +214,9 @@
                 success: function (data) {
                     $btn.prop('disabled', false);
                     if (data.result === 'ok') {
-                        $res.addClass('text-success').text('✓ ' + data.message);
+                        $res.addClass('text-success').text(data.message);
                     } else {
-                        $res.addClass('text-danger').text('✗ ' + data.message);
+                        $res.addClass('text-danger').text(data.message);
                     }
                 },
                 error: function (xhr) {
@@ -161,135 +226,155 @@
             });
         });
 
-        // ── I3 + E3: Log tabs ─────────────────────────────────────────
-        // Общая функция загрузки лога в <pre> элемент
-        // BUG-5 FIX: используем POST вместо GET — logAction/xraylogAction теперь POST-only
-        function loadLog(apiEndpoint, preId, btnId) {
-            $('#' + btnId).prop('disabled', true);
-            $('#' + preId).text("{{ lang._('Loading...') }}");
-            $.post(apiEndpoint, null, function (data) {
-                var text = (data && data.log) || "{{ lang._('Log is empty.') }}";
-                $('#' + preId).text(text);
-                $('#' + btnId).prop('disabled', false);
-                // Автоскролл вниз — последние строки видны сразу
-                var pre = document.getElementById(preId);
-                if (pre) { pre.scrollTop = pre.scrollHeight; }
-            }, 'json').fail(function (xhr) {
-                $('#' + preId).text("{{ lang._('Error loading log:') }} " + xhr.status);
-                $('#' + btnId).prop('disabled', false);
-            });
+        // ── Import VLESS (inside DialogInstance) ──────────────────
+        function applyImportToDialog(data) {
+            var $dlg = $('#DialogInstance');
+            var $modeSelect = $dlg.find('#instance\\.config_mode');
+
+            // Always set server/port for table display regardless of mode
+            $dlg.find('[id="instance.server_address"]').val(data.host || '');
+            $dlg.find('[id="instance.server_port"]').val(data.port || 443);
+
+            if (data.config_mode === 'custom') {
+                $modeSelect.val('custom').trigger('change');
+                if ($.fn.selectpicker) { $modeSelect.selectpicker('refresh'); }
+                $dlg.find('[id="instance.custom_config"]').val(data.custom_config || '');
+            } else {
+                var map = {
+                    'instance.server_address':      data.host  || '',
+                    'instance.server_port':         data.port  || 443,
+                    'instance.vless_uuid':          data.vless_uuid || '',
+                    'instance.flow':                data.flow  || 'xtls-rprx-vision',
+                    'instance.reality_sni':         data.sni   || '',
+                    'instance.reality_pubkey':      data.pbk   || '',
+                    'instance.reality_shortid':     data.sid   || '',
+                    'instance.reality_fingerprint': data.fp    || 'chrome'
+                };
+                $.each(map, function (id, val) {
+                    var $el = $dlg.find('[id="' + id + '"]');
+                    if ($el.is('select')) {
+                        $el.val(val).trigger('change');
+                        if ($.fn.selectpicker) { $el.selectpicker('refresh'); }
+                    } else {
+                        $el.val(val);
+                    }
+                });
+                $modeSelect.val('wizard').trigger('change');
+                if ($.fn.selectpicker) { $modeSelect.selectpicker('refresh'); }
+            }
+            // Set name from link fragment if available
+            if (data.name) {
+                $dlg.find('[id="instance.name"]').val(data.name);
+            }
+            toggleConfigMode();
         }
 
-        // Boot log (syshook, /tmp/xray_syshook.log) — загружается при входе на вкладку
-        $('a[href="#logs"]').on('shown.bs.tab', function () {
-            // Загружаем активную подвкладку при входе на вкладку Logs
-            var $active = $('#logSubTabs .active a');
-            var href = $active.attr('href');
-            if (href === '#logBoot') {
-                loadLog("/api/xray/service/log", 'logBootContent', 'logBootRefreshBtn');
-            } else if (href === '#logCore') {
-                loadLog("/api/xray/service/xraylog", 'logCoreContent', 'logCoreRefreshBtn');
+        // Inject Import panel + Validate button into DialogInstance on first open
+        var dialogInjected = false;
+        $('#DialogInstance').on('show.bs.modal', function () {
+            if (dialogInjected) {
+                // Reset state on each open
+                $('#dlgImportLink').val('');
+                $('#dlgImportResult').text('').removeClass('text-success text-danger');
+                $('#dlgImportPanel').collapse('hide');
+                $('#dlgValidateResult').text('').removeClass('text-success text-danger');
+                return;
             }
+            dialogInjected = true;
+
+            // Import panel — collapsible, injected before the form table
+            var importHtml =
+                '<div style="margin: 0 0 10px;">' +
+                    '<a data-toggle="collapse" href="#dlgImportPanel" class="btn btn-sm btn-default" style="margin-bottom: 6px;">' +
+                        '<i class="fa fa-upload"></i> {{ lang._("Import VLESS link") }}' +
+                    '</a>' +
+                    '<div id="dlgImportPanel" class="collapse">' +
+                        '<div class="well well-sm" style="margin-bottom: 0;">' +
+                            '<div class="input-group">' +
+                                '<input type="text" id="dlgImportLink" class="form-control input-sm"' +
+                                '  style="font-family: monospace; font-size: 12px;"' +
+                                '  placeholder="vless://UUID@host:443?security=reality&pbk=...#Name" />' +
+                                '<span class="input-group-btn">' +
+                                    '<button type="button" id="dlgImportParseBtn" class="btn btn-sm btn-primary">' +
+                                        '<i class="fa fa-magic"></i> {{ lang._("Parse & Fill") }}' +
+                                    '</button>' +
+                                '</span>' +
+                            '</div>' +
+                            '<span id="dlgImportResult" style="font-size: 12px; display: inline-block; margin-top: 4px;"></span>' +
+                        '</div>' +
+                    '</div>' +
+                '</div>';
+            var $body = $(this).find('.modal-body');
+            $body.prepend(importHtml);
+
+            // Validate button — in footer, before Save
+            var validateHtml =
+                '<button type="button" id="dlgValidateBtn" class="btn btn-info pull-left">' +
+                    '<i class="fa fa-check-circle"></i> {{ lang._("Validate Config") }}' +
+                '</button>' +
+                '<span id="dlgValidateResult" class="pull-left" style="font-size: 12px; line-height: 34px; margin-left: 8px;"></span>';
+            var $footer = $(this).find('.modal-footer');
+            $footer.prepend(validateHtml);
         });
 
-        // Переключение подвкладок лога
-        $('#logSubTabs a').on('shown.bs.tab', function (e) {
-            var href = $(e.target).attr('href');
-            if (href === '#logBoot') {
-                loadLog("/api/xray/service/log", 'logBootContent', 'logBootRefreshBtn');
-            } else if (href === '#logCore') {
-                loadLog("/api/xray/service/xraylog", 'logCoreContent', 'logCoreRefreshBtn');
-            }
-        });
-
-        // Кнопки Refresh для каждой подвкладки
-        $("#logBootRefreshBtn").click(function () {
-            loadLog("/api/xray/service/log", 'logBootContent', 'logBootRefreshBtn');
-        });
-        $("#logCoreRefreshBtn").click(function () {
-            loadLog("/api/xray/service/xraylog", 'logCoreContent', 'logCoreRefreshBtn');
-        });
-
-        // ── Import VLESS ──────────────────────────────────────────────
-        $("#importParseBtn").click(function () {
-            var link = $.trim($("#importVlessLink").val());
+        // Import parse handler (inside dialog)
+        $(document).on('click', '#dlgImportParseBtn', function () {
+            var link = $.trim($('#dlgImportLink').val());
+            var $res = $('#dlgImportResult');
             if (!link) {
-                alert("{{ lang._('Paste a VLESS link first.') }}");
+                $res.removeClass('text-success').addClass('text-danger')
+                    .text("{{ lang._('Paste a VLESS link first.') }}");
                 return;
             }
 
             var $btn = $(this).prop('disabled', true);
-
+            $res.removeClass('text-success text-danger').text("{{ lang._('Parsing...') }}");
             var b64 = btoa(unescape(encodeURIComponent(link)));
+
+            // Send current SOCKS5 settings from form so custom config uses them
+            var $dlg = $('#DialogInstance');
+            var socksListen = $dlg.find('[id="instance.socks5_listen"]').val() || '127.0.0.1';
+            var socksPort = parseInt($dlg.find('[id="instance.socks5_port"]').val(), 10) || 10808;
 
             $.ajax({
                 url:         '/api/xray/import/parse',
                 type:        'POST',
                 contentType: 'application/json; charset=utf-8',
-                data:        JSON.stringify({link_b64: b64}),
+                data:        JSON.stringify({link_b64: b64, socks5_listen: socksListen, socks5_port: socksPort}),
                 dataType:    'json',
                 success: function (data) {
                     $btn.prop('disabled', false);
                     if (data.status !== 'ok') {
-                        alert("{{ lang._('Parse error:') }} " + (data.message || 'unknown'));
+                        $res.removeClass('text-success').addClass('text-danger')
+                            .text("{{ lang._('Parse error:') }} " + (data.message || 'unknown'));
                         return;
                     }
-
-                    var $modeSelect = $('#instance\\.config_mode');
-
-                    if (data.config_mode === 'custom') {
-                        // P2.5: нестандартный transport/security → custom config
-                        $modeSelect.val('custom').trigger('change');
-                        if ($.fn.selectpicker) { $modeSelect.selectpicker('refresh'); }
-                        $('[id="instance.custom_config"]').val(data.custom_config || '');
-                        toggleConfigMode();
-                        $("#importModal").modal('hide');
-                        $('a[href="#instance"]').tab('show');
-                        setTimeout(function () {
-                            alert("{{ lang._('Imported as Custom Config (non-standard transport). Review the JSON and click Apply.') }}");
-                        }, 400);
-                    } else {
-                        // Wizard mode: заполняем поля как раньше
-                        var map = {
-                            'instance.server_address':      data.host  || '',
-                            'instance.server_port':         data.port  || 443,
-                            'instance.uuid':                data.uuid  || '',
-                            'instance.flow':                data.flow  || 'xtls-rprx-vision',
-                            'instance.reality_sni':         data.sni   || '',
-                            'instance.reality_pubkey':      data.pbk   || '',
-                            'instance.reality_shortid':     data.sid   || '',
-                            'instance.reality_fingerprint': data.fp    || 'chrome'
-                        };
-                        $.each(map, function (id, val) {
-                            var $el = $('[id="' + id + '"]');
-                            if ($el.is('select')) {
-                                $el.val(val).trigger('change');
-                                if ($.fn.selectpicker) { $el.selectpicker('refresh'); }
-                            } else {
-                                $el.val(val);
-                            }
-                        });
-                        $modeSelect.val('wizard').trigger('change');
-                        if ($.fn.selectpicker) { $modeSelect.selectpicker('refresh'); }
-                        toggleConfigMode();
-                        $("#importModal").modal('hide');
-                        $('a[href="#instance"]').tab('show');
-                        setTimeout(function () {
-                            alert("{{ lang._('Imported! Review fields and click Apply.') }}");
-                        }, 400);
-                    }
+                    applyImportToDialog(data);
+                    $res.removeClass('text-danger').addClass('text-success')
+                        .text("{{ lang._('Imported! Fields filled from link.') }}");
+                    // Collapse import panel after success
+                    setTimeout(function () { $('#dlgImportPanel').collapse('hide'); }, 1500);
                 },
                 error: function (xhr) {
                     $btn.prop('disabled', false);
-                    alert("{{ lang._('HTTP error:') }} " + xhr.status);
+                    $res.removeClass('text-success').addClass('text-danger')
+                        .text("{{ lang._('HTTP error:') }} " + xhr.status);
                 }
             });
         });
 
-        // ── E5: Validate Config ─────────────────────────────────
-        $('#btnValidate').click(function () {
+        // Enter key in import field triggers parse
+        $(document).on('keypress', '#dlgImportLink', function (e) {
+            if (e.which === 13) {
+                e.preventDefault();
+                $('#dlgImportParseBtn').click();
+            }
+        });
+
+        // ── Validate Config (inside DialogInstance footer) ────────
+        $(document).on('click', '#dlgValidateBtn', function () {
             var $btn = $(this).prop('disabled', true);
-            var $res = $('#validateResult');
+            var $res = $('#dlgValidateResult');
             $res.removeClass('text-success text-danger').text("{{ lang._('Validating...') }}");
 
             $.ajax({
@@ -300,10 +385,10 @@
                     $btn.prop('disabled', false);
                     if (data.result === 'ok') {
                         $res.removeClass('text-danger').addClass('text-success')
-                            .text('✓ ' + (data.message || "{{ lang._('Config is valid') }}"));
+                            .text(data.message || "{{ lang._('Config is valid') }}");
                     } else {
                         $res.removeClass('text-success').addClass('text-danger')
-                            .text('✗ ' + (data.message || "{{ lang._('Validation failed') }}"));
+                            .text(data.message || "{{ lang._('Validation failed') }}");
                     }
                 },
                 error: function (xhr) {
@@ -313,7 +398,7 @@
             });
         });
 
-        // ── E4: Diagnostics ──────────────────────────────────────
+        // ── Diagnostics ─────────────────────────────────────────────
         function loadDiagnostics() {
             $('#btnDiagRefresh').prop('disabled', true);
             $('#diagError').hide();
@@ -323,27 +408,25 @@
                     $('#diagError').text(data.error).show();
                     return;
                 }
-                // Статус интерфейса с подсветкой
                 var running = data.tun_status === 'running';
                 var statusHtml = running
                     ? '<span class="label label-success">running</span>'
-                    : '<span class="label label-danger">' + (data.tun_status || 'down') + '</span>';
+                    : '<span class="label label-danger">' + escAttr(data.tun_status || 'down') + '</span>';
 
-                $('#diag_tun_iface').text(data.tun_interface  || '—');
+                $('#diag_tun_iface').text(data.tun_interface  || '\u2014');
                 $('#diag_tun_status').html(statusHtml);
-                $('#diag_tun_ip').text(data.tun_ip           || '—');
-                $('#diag_mtu').text(data.mtu > 0 ? data.mtu + ' bytes' : '—');
-                $('#diag_bytes_in').text(data.bytes_in_hr    || '—');
-                $('#diag_bytes_out').text(data.bytes_out_hr  || '—');
-                $('#diag_pkts_in').text(data.pkts_in != null ? data.pkts_in.toLocaleString() : '—');
-                $('#diag_pkts_out').text(data.pkts_out != null ? data.pkts_out.toLocaleString() : '—');
-                $('#diag_xray_uptime').text(data.xray_uptime || '—');
-                $('#diag_t2s_uptime').text(data.tun2socks_uptime || '—');
+                $('#diag_tun_ip').text(data.tun_ip           || '\u2014');
+                $('#diag_mtu').text(data.mtu > 0 ? data.mtu + ' bytes' : '\u2014');
+                $('#diag_bytes_in').text(data.bytes_in_hr    || '\u2014');
+                $('#diag_bytes_out').text(data.bytes_out_hr  || '\u2014');
+                $('#diag_pkts_in').text(data.pkts_in != null ? data.pkts_in.toLocaleString() : '\u2014');
+                $('#diag_pkts_out').text(data.pkts_out != null ? data.pkts_out.toLocaleString() : '\u2014');
+                $('#diag_xray_uptime').text(data.xray_uptime || '\u2014');
+                $('#diag_t2s_uptime').text(data.tun2socks_uptime || '\u2014');
                 $('#diag_ping_rtt').text(data.ping_rtt || 'N/A');
             });
         }
 
-        // P2-7: автообновление каждые 30с пока вкладка Diagnostics активна
         var diagAutoRefresh = null;
         $('a[href="#diagnostics"]').on('shown.bs.tab', function () {
             loadDiagnostics();
@@ -359,13 +442,54 @@
             loadDiagnostics();
         });
 
-        // ── P2-8: Copy Debug Info ────────────────────────────────────
+        // ── Logs ────────────────────────────────────────────────────
+        function loadLog(apiEndpoint, preId, btnId) {
+            $('#' + btnId).prop('disabled', true);
+            $('#' + preId).text("{{ lang._('Loading...') }}");
+            $.post(apiEndpoint, null, function (data) {
+                var text = (data && data.log) || "{{ lang._('Log is empty.') }}";
+                $('#' + preId).text(text);
+                $('#' + btnId).prop('disabled', false);
+                var pre = document.getElementById(preId);
+                if (pre) { pre.scrollTop = pre.scrollHeight; }
+            }, 'json').fail(function (xhr) {
+                $('#' + preId).text("{{ lang._('Error loading log:') }} " + xhr.status);
+                $('#' + btnId).prop('disabled', false);
+            });
+        }
+
+        $('a[href="#logs"]').on('shown.bs.tab', function () {
+            var $active = $('#logSubTabs .active a');
+            var href = $active.attr('href');
+            if (href === '#logBoot') {
+                loadLog("/api/xray/service/log", 'logBootContent', 'logBootRefreshBtn');
+            } else if (href === '#logCore') {
+                loadLog("/api/xray/service/xraylog", 'logCoreContent', 'logCoreRefreshBtn');
+            }
+        });
+
+        $('#logSubTabs a').on('shown.bs.tab', function (e) {
+            var href = $(e.target).attr('href');
+            if (href === '#logBoot') {
+                loadLog("/api/xray/service/log", 'logBootContent', 'logBootRefreshBtn');
+            } else if (href === '#logCore') {
+                loadLog("/api/xray/service/xraylog", 'logCoreContent', 'logCoreRefreshBtn');
+            }
+        });
+
+        $("#logBootRefreshBtn").click(function () {
+            loadLog("/api/xray/service/log", 'logBootContent', 'logBootRefreshBtn');
+        });
+        $("#logCoreRefreshBtn").click(function () {
+            loadLog("/api/xray/service/xraylog", 'logCoreContent', 'logCoreRefreshBtn');
+        });
+
+        // ── Copy Debug Info ─────────────────────────────────────────
         $('#btnCopyDebug').click(function () {
             var $btn = $(this).prop('disabled', true);
             var $res = $('#copyDebugResult');
             $res.removeClass('text-success text-danger').text("{{ lang._('Collecting...') }}");
 
-            // Собираем данные параллельно: diagnostics + логи
             var diagData = {}, bootLog = '', coreLog = '';
             var diagDone = $.Deferred(), bootDone = $.Deferred(), coreDone = $.Deferred();
 
@@ -392,10 +516,8 @@
                     + "--- Core Log (last 200 lines) ---\n"
                     + coreLog + "\n";
 
-                // Показываем модалку с текстом — clipboard API ненадёжен после async
                 $('#debugInfoContent').val(info);
                 $('#debugInfoModal').modal('show');
-                // Автовыделение текста при показе модалки
                 $('#debugInfoModal').one('shown.bs.modal', function () {
                     var ta = document.getElementById('debugInfoContent');
                     ta.focus();
@@ -406,7 +528,7 @@
             });
         });
 
-        // ── Tab hash ──────────────────────────────────────────────────
+        // ── Tab hash ────────────────────────────────────────────────
         if (window.location.hash !== "") {
             $('a[href="' + window.location.hash + '"]').click();
         }
@@ -417,7 +539,7 @@
 </script>
 
 <ul class="nav nav-tabs" data-tabs="tabs" id="maintabs">
-    <li class="active"><a data-toggle="tab" href="#instance">{{ lang._('Instance') }}</a></li>
+    <li class="active"><a data-toggle="tab" href="#instances">{{ lang._('Instances') }}</a></li>
     <li><a data-toggle="tab" href="#general">{{ lang._('General') }}</a></li>
     <li><a data-toggle="tab" href="#diagnostics">{{ lang._('Diagnostics') }}</a></li>
     <li><a data-toggle="tab" href="#logs">{{ lang._('Log') }}</a></li>
@@ -425,30 +547,26 @@
 
 <div class="tab-content content-box">
 
-    <!-- INSTANCE -->
-    <div id="instance" class="tab-pane fade in active">
-        {# E2: панель статуса + кнопки управления сервисами #}
+    <!-- INSTANCES -->
+    <div id="instances" class="tab-pane fade in active">
+        {# Status bar + service controls #}
         <div style="padding: 10px 15px 6px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px;">
             <span id="badge_xray" class="label label-default">xray-core: ...</span>
             <span id="badge_tun"  class="label label-default">tun2socks: ...</span>
 
             <span style="margin-left: 4px; border-left: 1px solid #ddd; padding-left: 8px; display: inline-flex; gap: 4px;">
-                {# Start — отключена если хотя бы один процесс уже запущен (синхронизировано в JS) #}
-                <button id="btnStart" class="btn btn-xs btn-success" title="{{ lang._('Start Xray services') }}">
+                <button id="btnStart" class="btn btn-xs btn-success" title="{{ lang._('Start all instances') }}">
                     <i class="fa fa-play"></i> {{ lang._('Start') }}
                 </button>
-                {# Stop — отключена если оба процесса уже остановлены #}
-                <button id="btnStop" class="btn btn-xs btn-danger" title="{{ lang._('Stop Xray services') }}">
+                <button id="btnStop" class="btn btn-xs btn-danger" title="{{ lang._('Stop all instances') }}">
                     <i class="fa fa-stop"></i> {{ lang._('Stop') }}
                 </button>
-                {# Restart — всегда доступна: останавливает всё и запускает заново без записи конфига #}
                 <button id="btnRestart" class="btn btn-xs btn-warning" title="{{ lang._('Restart without saving config') }}">
                     <i class="fa fa-refresh"></i> {{ lang._('Restart') }}
                 </button>
             </span>
 
             <span style="border-left: 1px solid #ddd; padding-left: 8px;">
-                {# I8: Test Connection #}
                 <button id="testConnectBtn" class="btn btn-xs btn-default" style="vertical-align: baseline;">
                     <i class="fa fa-plug"></i> {{ lang._('Test Connection') }}
                 </button>
@@ -456,17 +574,39 @@
             <span id="testConnectResult" style="font-size: 12px;"></span>
         </div>
 
-        <div style="padding: 0 15px 8px; display: flex; gap: 6px; flex-wrap: wrap;">
-            <button class="btn btn-sm btn-default" data-toggle="modal" data-target="#importModal">
-                <i class="fa fa-upload"></i> {{ lang._('Import VLESS link') }}
-            </button>
-            {# E5: Validate Config — сухой прогон без перезапуска #}
-            <button id="btnValidate" class="btn btn-sm btn-info">
-                <i class="fa fa-check-circle"></i> {{ lang._('Validate Config') }}
-            </button>
-            <span id="validateResult" style="font-size: 12px; line-height: 30px;"></span>
+
+        {# Bootgrid instances table #}
+        <table id="grid-instances" class="table table-condensed table-hover table-striped"
+               data-editDialog="DialogInstance" data-editAlert="InstanceChangeMessage">
+            <thead>
+                <tr>
+                    <th data-column-id="uuid" data-type="string" data-identifier="true" data-visible="false">{{ lang._('ID') }}</th>
+                    <th data-column-id="name" data-type="string">{{ lang._('Name') }}</th>
+                    <th data-column-id="server_address" data-type="string">{{ lang._('Server') }}</th>
+                    <th data-column-id="server_port" data-type="string" data-width="80px">{{ lang._('Port') }}</th>
+                    <th data-column-id="config_mode" data-type="string" data-width="100px">{{ lang._('Mode') }}</th>
+                    <th data-column-id="inst_status" data-formatter="instanceStatus" data-sortable="false" data-width="180px">{{ lang._('Status') }}</th>
+                    <th data-column-id="commands" data-formatter="commands" data-sortable="false" data-width="120px">{{ lang._('') }}</th>
+                </tr>
+            </thead>
+            <tbody></tbody>
+            <tfoot>
+                <tr>
+                    <td></td>
+                    <td>
+                        <button data-action="add" type="button" class="btn btn-xs btn-primary">
+                            <span class="fa fa-fw fa-plus"></span>
+                        </button>
+                        <button data-action="deleteSelected" type="button" class="btn btn-xs btn-default">
+                            <span class="fa fa-fw fa-trash-o"></span>
+                        </button>
+                    </td>
+                </tr>
+            </tfoot>
+        </table>
+        <div id="InstanceChangeMessage" class="alert alert-info" style="display: none;" role="alert">
+            {{ lang._('Changes saved. Click Apply below to activate.') }}
         </div>
-        {{ partial("layout_partials/base_form", {'fields': instanceForm, 'id': 'frm_instance_settings'}) }}
     </div>
 
     <!-- GENERAL -->
@@ -474,7 +614,7 @@
         {{ partial("layout_partials/base_form", {'fields': generalForm, 'id': 'frm_general_settings'}) }}
     </div>
 
-    <!-- DIAGNOSTICS (E4) -->
+    <!-- DIAGNOSTICS -->
     <div id="diagnostics" class="tab-pane fade in">
         <div style="padding: 12px 15px 4px; display: flex; align-items: center; gap: 8px;">
             <button id="btnDiagRefresh" class="btn btn-sm btn-default">
@@ -488,29 +628,27 @@
         </div>
 
         <div style="padding: 8px 15px 15px;">
-            {# Таблица статистики #}
             <table class="table table-condensed table-striped" style="max-width: 600px;">
                 <tbody>
-                    <tr><th style="width:220px;">{{ lang._('TUN Interface') }}</th><td id="diag_tun_iface">—</td></tr>
-                    <tr><th>{{ lang._('TUN Status') }}</th><td id="diag_tun_status">—</td></tr>
-                    <tr><th>{{ lang._('TUN IP') }}</th><td id="diag_tun_ip">—</td></tr>
-                    <tr><th>{{ lang._('MTU') }}</th><td id="diag_mtu">—</td></tr>
-                    <tr><th>{{ lang._('Bytes In') }}</th><td id="diag_bytes_in">—</td></tr>
-                    <tr><th>{{ lang._('Bytes Out') }}</th><td id="diag_bytes_out">—</td></tr>
-                    <tr><th>{{ lang._('Packets In') }}</th><td id="diag_pkts_in">—</td></tr>
-                    <tr><th>{{ lang._('Packets Out') }}</th><td id="diag_pkts_out">—</td></tr>
-                    <tr><th>{{ lang._('xray-core Uptime') }}</th><td id="diag_xray_uptime">—</td></tr>
-                    <tr><th>{{ lang._('tun2socks Uptime') }}</th><td id="diag_t2s_uptime">—</td></tr>
-                    <tr><th>{{ lang._('Server Ping RTT') }}</th><td id="diag_ping_rtt">—</td></tr>
+                    <tr><th style="width:220px;">{{ lang._('TUN Interface') }}</th><td id="diag_tun_iface">&mdash;</td></tr>
+                    <tr><th>{{ lang._('TUN Status') }}</th><td id="diag_tun_status">&mdash;</td></tr>
+                    <tr><th>{{ lang._('TUN IP') }}</th><td id="diag_tun_ip">&mdash;</td></tr>
+                    <tr><th>{{ lang._('MTU') }}</th><td id="diag_mtu">&mdash;</td></tr>
+                    <tr><th>{{ lang._('Bytes In') }}</th><td id="diag_bytes_in">&mdash;</td></tr>
+                    <tr><th>{{ lang._('Bytes Out') }}</th><td id="diag_bytes_out">&mdash;</td></tr>
+                    <tr><th>{{ lang._('Packets In') }}</th><td id="diag_pkts_in">&mdash;</td></tr>
+                    <tr><th>{{ lang._('Packets Out') }}</th><td id="diag_pkts_out">&mdash;</td></tr>
+                    <tr><th>{{ lang._('xray-core Uptime') }}</th><td id="diag_xray_uptime">&mdash;</td></tr>
+                    <tr><th>{{ lang._('tun2socks Uptime') }}</th><td id="diag_t2s_uptime">&mdash;</td></tr>
+                    <tr><th>{{ lang._('Server Ping RTT') }}</th><td id="diag_ping_rtt">&mdash;</td></tr>
                 </tbody>
             </table>
             <p id="diagError" class="text-danger" style="display:none;"></p>
         </div>
     </div>
 
-    <!-- LOG (I3 + E3) -->
+    <!-- LOGS -->
     <div id="logs" class="tab-pane fade in">
-        {# E3: две подвкладки — Boot Log и Xray Core Log #}
         <div style="padding: 10px 15px 0;">
             <ul class="nav nav-pills" id="logSubTabs" style="margin-bottom: 0;">
                 <li class="active">
@@ -527,8 +665,6 @@
         </div>
 
         <div class="tab-content" style="padding: 0 15px 15px;">
-
-            {# Boot Log — /tmp/xray_syshook.log, последние 150 строк #}
             <div id="logBoot" class="tab-pane fade in active" style="padding-top: 10px;">
                 <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
                     <button id="logBootRefreshBtn" class="btn btn-sm btn-default">
@@ -545,8 +681,6 @@
                             padding: 12px; border-radius: 4px; border: 1px solid #444;">{{ lang._('Switch to this tab to load log.') }}</pre>
             </div>
 
-            {# Xray Core Log — /var/log/xray-core.log, последние 200 строк #}
-            {# Лог доступен после BUG-7 fix; ротируется через newsyslog (BUG-11 fix) #}
             <div id="logCore" class="tab-pane fade in" style="padding-top: 10px;">
                 <div style="margin-bottom: 8px; display: flex; align-items: center; gap: 8px;">
                     <button id="logCoreRefreshBtn" class="btn btn-sm btn-default">
@@ -562,7 +696,6 @@
                             font-family: monospace; font-size: 12px;
                             padding: 12px; border-radius: 4px; border: 1px solid #444;">{{ lang._('Click "Xray Core Log" tab to load.') }}</pre>
             </div>
-
         </div>
     </div>
 
@@ -570,35 +703,9 @@
 
 {{ partial('layout_partials/base_apply_button', {'data_endpoint': '/api/xray/service/reconfigure'}) }}
 
-<!-- Import Modal -->
-<div class="modal fade" id="importModal" tabindex="-1" role="dialog">
-    <div class="modal-dialog modal-lg">
-        <div class="modal-content">
-            <div class="modal-header">
-                <button type="button" class="close" data-dismiss="modal"><span>&times;</span></button>
-                <h4 class="modal-title">
-                    <i class="fa fa-upload"></i> {{ lang._('Import VLESS Link') }}
-                </h4>
-            </div>
-            <div class="modal-body">
-                <p class="text-muted">
-                    {{ lang._('Paste your VLESS link. All Instance fields will be filled automatically.') }}
-                </p>
-                <input type="text"
-                       id="importVlessLink"
-                       class="form-control"
-                       style="font-family: monospace; font-size: 12px;"
-                       placeholder="vless://UUID@host:443?security=reality&pbk=...&sni=...&fp=chrome&flow=xtls-rprx-vision#Name" />
-            </div>
-            <div class="modal-footer">
-                <button type="button" class="btn btn-default" data-dismiss="modal">{{ lang._('Cancel') }}</button>
-                <button type="button" class="btn btn-primary" id="importParseBtn">
-                    <i class="fa fa-magic"></i> {{ lang._('Parse & Fill') }}
-                </button>
-            </div>
-        </div>
-    </div>
-</div>
+{# Instance edit/add dialog (used by UIBootgrid) #}
+{{ partial("layout_partials/base_dialog",['fields':instanceForm,'id':'DialogInstance','label':lang._('Edit Instance')]) }}
+
 
 <!-- Debug Info Modal -->
 <div class="modal fade" id="debugInfoModal" tabindex="-1" role="dialog">
