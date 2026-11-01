@@ -11,33 +11,52 @@ require_once(__DIR__ . '/xray-boot-log.inc.php');
 require_once(__DIR__ . '/xray-if-test.inc.php');
 require_once(__DIR__ . '/xray-bird-active-tun.php');
 
-function xray_if_health_curl(string $listen, int $port): array
+function xray_if_health_curl(string $listen, int $port, int $retries = 3): array
 {
-    $connectAddr = ($listen === '0.0.0.0') ? '127.0.0.1' : $listen;
     if ($port < 1 || $port > 65535) {
         $port = 10808;
     }
-    $proxy = $connectAddr . ':' . $port;
-    $out   = [];
-    exec(
-        '/usr/local/bin/curl'
-        . ' --socks5 ' . escapeshellarg($proxy)
-        . ' -s -L -o /dev/null'
-        . ' -w %{http_code}'
-        . ' ' . escapeshellarg('https://1.1.1.1')
-        . ' --max-time 10',
-        $out,
-        $rc
-    );
-    $code = trim(implode('', $out));
-    $http = (int)$code;
-    $ok   = ($rc === 0 && $http >= 200 && $http < 400);
-    return [
-        'ok'    => $ok,
-        'http'  => $http,
+    $proxy = xray_socks_connect_host($listen) . ':' . $port;
+    xray_socks_wait_ready($listen, $port, 10);
+    $last = [
+        'ok'    => false,
+        'http'  => 0,
         'proxy' => $proxy,
-        'code'  => $code !== '' ? $code : '0',
+        'code'  => '0',
     ];
+    $tries = max(1, $retries);
+    for ($i = 0; $i < $tries; $i++) {
+        $out = [];
+        $rc = 0;
+        exec(
+            '/usr/local/bin/curl'
+            . ' --socks5 ' . escapeshellarg($proxy)
+            . ' -s -L -o /dev/null'
+            . ' -w %{http_code}'
+            . ' ' . escapeshellarg('https://1.1.1.1')
+            . ' --max-time 10',
+            $out,
+            $rc
+        );
+        $code = trim(implode('', $out));
+        $http = (int)$code;
+        $ok   = ($rc === 0 && $http >= 200 && $http < 400);
+        $last = [
+            'ok'    => $ok,
+            'http'  => $http,
+            'proxy' => $proxy,
+            'code'  => $code !== '' ? $code : '0',
+        ];
+        if ($ok) {
+            return $last;
+        }
+        if ($http !== 0 || $i + 1 >= $tries) {
+            return $last;
+        }
+        usleep(500000);
+        xray_socks_wait_ready($listen, $port, 3);
+    }
+    return $last;
 }
 
 $cfg     = OPNsense\Core\Config::getInstance()->object();
@@ -101,24 +120,31 @@ foreach (['v4' => $act4, 'v6' => $act6] as $fam => $tun) {
 
 $reselected = false;
 $selMsg     = '';
+$anyOk      = count($failed) < count($cands);
 if ($activeFailed !== []) {
     echo "if health: active IF failed — " . implode('; ', $activeFailed) . "\n";
-    echo "if health: reselecting active tun\n";
-    $sel = xray_bird_select_and_write_active_tun();
-    if (!empty($sel['changed'])) {
-        $cfgObj = OPNsense\Core\Config::getInstance()->object();
-        $bgpOn  = (string)($cfgObj->OPNsense->xray->general->bgp_enabled ?? '0') === '1';
-        if ($bgpOn) {
-            xray_bird_active_tun_configure();
-            $selMsg = 'active tun changed — birdc configure';
-        } else {
-            $selMsg = 'active tun changed — BGP off, files only';
-        }
-        $reselected = true;
+    // All SOCKS probes failed (typical boot race) — do not reshuffle ACTIVE_TUN by weight.
+    if (!$anyOk) {
+        $selMsg = 'skip reselect — all IF probes failed (SOCKS not ready?)';
+        echo "if health: {$selMsg}\n";
     } else {
-        $selMsg = 'reselect ran, active tun unchanged';
+        echo "if health: reselecting active tun\n";
+        $sel = xray_bird_select_and_write_active_tun();
+        if (!empty($sel['changed'])) {
+            $cfgObj = OPNsense\Core\Config::getInstance()->object();
+            $bgpOn  = (string)($cfgObj->OPNsense->xray->general->bgp_enabled ?? '0') === '1';
+            if ($bgpOn) {
+                xray_bird_active_tun_configure();
+                $selMsg = 'active tun changed — birdc configure';
+            } else {
+                $selMsg = 'active tun changed — BGP off, files only';
+            }
+            $reselected = true;
+        } else {
+            $selMsg = 'reselect ran, active tun unchanged';
+        }
+        echo "if health: {$selMsg}\n";
     }
-    echo "if health: {$selMsg}\n";
 } else {
     echo "if health: active IF ok (v4={$act4}, v6={$act6})\n";
 }

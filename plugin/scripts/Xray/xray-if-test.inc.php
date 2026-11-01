@@ -85,3 +85,44 @@ function xray_if_test_save_one(
         $source
     );
 }
+
+/** Normalize SOCKS connect address (0.0.0.0 → 127.0.0.1). */
+function xray_socks_connect_host(string $listen): string
+{
+    $listen = trim($listen);
+    return ($listen === '' || $listen === '0.0.0.0') ? '127.0.0.1' : $listen;
+}
+
+function xray_socks_port_open(string $listen, int $port, float $timeout = 0.35): bool
+{
+    if ($port < 1 || $port > 65535) {
+        return false;
+    }
+    $host = xray_socks_connect_host($listen);
+    $errno = 0;
+    $errstr = '';
+    $fp = @fsockopen($host, $port, $errno, $errstr, $timeout);
+    if (!is_resource($fp)) {
+        return false;
+    }
+    fclose($fp);
+    return true;
+}
+
+/**
+ * Wait until SOCKS port accepts TCP (boot / syshook race with xray-core).
+ */
+function xray_socks_wait_ready(string $listen, int $port, int $maxWaitSec = 12): bool
+{
+    if ($port < 1 || $port > 65535) {
+        $port = 10808;
+    }
+    $deadline = microtime(true) + max(0, $maxWaitSec);
+    do {
+        if (xray_socks_port_open($listen, $port)) {
+            return true;
+        }
+        usleep(250000);
+    } while (microtime(true) < $deadline);
+    return false;
+}

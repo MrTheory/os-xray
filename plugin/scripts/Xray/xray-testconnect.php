@@ -41,23 +41,36 @@ if ($port < 1 || $port > 65535) {
 }
 
 // 0.0.0.0 слушает на всех интерфейсах — для теста подключаемся на loopback
-$connectAddr = ($listen === '0.0.0.0') ? '127.0.0.1' : $listen;
-$proxy   = $connectAddr . ':' . $port;
+$proxy   = xray_socks_connect_host($listen) . ':' . $port;
 $target  = 'https://1.1.1.1';
 $timeout = '10';
 
-exec(
-    '/usr/local/bin/curl'
-    . ' --socks5 ' . escapeshellarg($proxy)
-    . ' -s -L -o /dev/null'
-    . ' -w %{http_code}'
-    . ' ' . escapeshellarg($target)
-    . ' --max-time ' . $timeout,
-    $out,
-    $rc
-);
-
-$code = implode('', $out);
+xray_socks_wait_ready($listen, $port, 10);
+$code = '0';
+$rc = 1;
+for ($i = 0; $i < 3; $i++) {
+    $out = [];
+    exec(
+        '/usr/local/bin/curl'
+        . ' --socks5 ' . escapeshellarg($proxy)
+        . ' -s -L -o /dev/null'
+        . ' -w %{http_code}'
+        . ' ' . escapeshellarg($target)
+        . ' --max-time ' . $timeout,
+        $out,
+        $rc
+    );
+    $code = implode('', $out);
+    $httpTry = (int)$code;
+    if ($rc === 0 && $httpTry >= 200 && $httpTry < 400) {
+        break;
+    }
+    if ($httpTry !== 0) {
+        break;
+    }
+    usleep(500000);
+    xray_socks_wait_ready($listen, $port, 3);
+}
 echo $code . "\n";
 
 $http = (int)$code;

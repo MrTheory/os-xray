@@ -1,3 +1,4 @@
+#!/usr/local/bin/php
 <?php
 /**
  * Host routes via WAN for BGP peers (except dnstap) and Xray instance servers.

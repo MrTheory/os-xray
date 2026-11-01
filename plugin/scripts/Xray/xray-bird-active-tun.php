@@ -19,6 +19,7 @@
 
 require_once('config.inc');
 require_once(__DIR__ . '/xray-boot-log.inc.php');
+require_once(__DIR__ . '/xray-if-test.inc.php');
 require_once(__DIR__ . '/xray-gateways.php');
 
 if (!defined('XRAY_BIRD_INC_DIR')) {
@@ -186,38 +187,58 @@ function xray_bird_active_tun_weight($raw): int
 
 /**
  * curl через SOCKS5. $ipFlag: '-4' или '-6'. Успех — HTTP 200–399.
+ * Retries on HTTP 000 (SOCKS not ready yet during boot/syshook).
  * @return array{ok:bool,http:int,time:float,raw:string}
  */
-function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag): array
+function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag, int $retries = 3): array
 {
-    $connectAddr = ($listen === '0.0.0.0') ? '127.0.0.1' : $listen;
     if ($port < 1 || $port > 65535) {
         $port = 10808;
     }
     $ipFlag = ($ipFlag === '-6') ? '-6' : '-4';
-    $proxy = $connectAddr . ':' . $port;
-    $out = [];
-    exec(
-        '/usr/local/bin/curl ' . $ipFlag
-        . ' --socks5 ' . escapeshellarg($proxy)
-        . ' -s -L -o /dev/null'
-        . ' -w ' . escapeshellarg("Код ответа: %{http_code}\nВремя ответа: %{time_total} сек\n")
-        . ' ' . escapeshellarg('https://google.com')
-        . ' --max-time 10',
-        $out,
-        $rc
-    );
-    $raw  = trim(implode("\n", $out));
-    $http = 0;
-    $time = 0.0;
-    if (preg_match('/Код ответа:\s*(\d+)/u', $raw, $m)) {
-        $http = (int)$m[1];
+    $proxy = xray_socks_connect_host($listen) . ':' . $port;
+    if (function_exists('xray_socks_wait_ready')) {
+        xray_socks_wait_ready($listen, $port, 10);
     }
-    if (preg_match('/Время ответа:\s*([0-9.]+)/u', $raw, $m)) {
-        $time = (float)$m[1];
+    $last = ['ok' => false, 'http' => 0, 'time' => 0.0, 'raw' => ''];
+    $tries = max(1, $retries);
+    for ($i = 0; $i < $tries; $i++) {
+        $out = [];
+        $rc = 0;
+        exec(
+            '/usr/local/bin/curl ' . $ipFlag
+            . ' --socks5 ' . escapeshellarg($proxy)
+            . ' -s -L -o /dev/null'
+            . ' -w ' . escapeshellarg("Код ответа: %{http_code}\nВремя ответа: %{time_total} сек\n")
+            . ' ' . escapeshellarg('https://google.com')
+            . ' --max-time 10',
+            $out,
+            $rc
+        );
+        $raw  = trim(implode("\n", $out));
+        $http = 0;
+        $time = 0.0;
+        if (preg_match('/Код ответа:\s*(\d+)/u', $raw, $m)) {
+            $http = (int)$m[1];
+        }
+        if (preg_match('/Время ответа:\s*([0-9.]+)/u', $raw, $m)) {
+            $time = (float)$m[1];
+        }
+        $ok = ($rc === 0 && $http >= 200 && $http < 400);
+        $last = ['ok' => $ok, 'http' => $http, 'time' => $time, 'raw' => $raw];
+        if ($ok) {
+            return $last;
+        }
+        // Real HTTP from target — no point retrying. Only retry connect failures (000).
+        if ($http !== 0 || $i + 1 >= $tries) {
+            return $last;
+        }
+        usleep(500000);
+        if (function_exists('xray_socks_wait_ready')) {
+            xray_socks_wait_ready($listen, $port, 3);
+        }
     }
-    $ok = ($rc === 0 && $http >= 200 && $http < 400);
-    return ['ok' => $ok, 'http' => $http, 'time' => $time, 'raw' => $raw];
+    return $last;
 }
 
 function xray_bird_active_tun_configure(): void
