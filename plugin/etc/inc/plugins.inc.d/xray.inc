@@ -13,12 +13,21 @@ function xray_configure(): array
 }
 
 /**
+ * Load boot helpers (light flag + deferred birdsync).
+ */
+function xray_boot_helpers_load(): void
+{
+    $inc = '/usr/local/opnsense/scripts/Xray/xray-boot-log.inc.php';
+    if (is_readable($inc)) {
+        require_once $inc;
+    }
+}
+
+/**
  * BUG-1 FIX: убрана хрупкая goto-логика управления lock-файлом.
  *
- * v3.0.0: итерирует все инстансы из config.xml, для каждого:
- *   - Захватывает per-instance lock (xray_start_<uuid>.lock)
- *   - Запускает xray-core + tun2socks если не запущены
- *   - Ждёт TUN-интерфейс до 5 секунд
+ * Boot path (proposals 1–5): start daemons only — no SOCKS probes, no sync birdsync,
+ * no heavy filter/routing here. One deferred birdsync_postboot after delay.
  */
 function xray_bird_sync_exec(): void
 {
@@ -31,24 +40,36 @@ function xray_bird_sync_exec(): void
 
 function xray_configure_do(bool $verbose = false): void
 {
+    xray_boot_helpers_load();
+
+    // Mark light boot so 50-xray / SOCKS probes / start path stay cheap.
+    if (function_exists('xray_boot_light_begin')) {
+        xray_boot_light_begin();
+    }
+
     if (!xray_enabled()) {
-        xray_bird_sync_exec();
+        if (function_exists('xray_bird_sync_deferred')) {
+            xray_bird_sync_deferred();
+        }
         return;
     }
 
     $cfg       = OPNsense\Core\Config::getInstance()->object();
     $instances = $cfg->OPNsense->xray->instances ?? null;
     if (!$instances) {
-        xray_bird_sync_exec();
+        if (function_exists('xray_bird_sync_deferred')) {
+            xray_bird_sync_deferred();
+        }
         return;
     }
 
     $xrayBin  = '/usr/local/bin/xray-core';
     $t2sBin   = '/usr/local/tun2socks/tun2socks';
-    $daemonLog = '/var/log/xray-core.log';
 
     if (!file_exists($xrayBin) || !file_exists($t2sBin)) {
-        xray_bird_sync_exec();
+        if (function_exists('xray_bird_sync_deferred')) {
+            xray_bird_sync_deferred();
+        }
         return;
     }
 
@@ -58,12 +79,9 @@ function xray_configure_do(bool $verbose = false): void
             continue;
         }
 
-        $xrayConf  = "/usr/local/etc/xray-core/config-{$inst_uuid}.json";
         $xrayPid   = "/var/run/xray_core_{$inst_uuid}.pid";
-        $t2sConf   = "/usr/local/tun2socks/config-{$inst_uuid}.yaml";
         $t2sPid    = "/var/run/tun2socks_{$inst_uuid}.pid";
         $lockFile  = "/var/run/xray_start_{$inst_uuid}.lock";
-        $tunIface  = (string)($inst->tun_interface ?? 'proxytun2socks0');
 
         // BUG-1 FIX: per-instance lock без goto. Если lock занят — пропускаем.
         $lockFd       = false;
@@ -105,13 +123,14 @@ function xray_configure_do(bool $verbose = false): void
                     if ($verbose) {
                         echo "xray [{$inst_uuid}]: starting via xray-service-control.php...\n";
                     }
-                    exec('/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php start '
+                    // start_boot: daemons + light TUN setup only (no BGP/SOCKS/birdsync).
+                    exec('/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php start_boot '
                         . escapeshellarg($inst_uuid) . ' 2>&1', $startOut, $startRc);
                     if ($verbose && !empty($startOut)) {
                         echo implode("\n", $startOut) . "\n";
                     }
                     if ($startRc !== 0 && $verbose) {
-                        echo "xray [{$inst_uuid}]: start returned exit {$startRc}\n";
+                        echo "xray [{$inst_uuid}]: start_boot returned exit {$startRc}\n";
                     }
                 }
             } finally {
@@ -125,26 +144,14 @@ function xray_configure_do(bool $verbose = false): void
         }
     }
 
-    // reload firewall/routing — выполняется всегда
-    @include_once('filter.inc');
-    @include_once('interfaces.inc');
-    @include_once('system.inc');
-
-    if (function_exists('filter_configure_sync')) {
-        filter_configure_sync();
-    } elseif (function_exists('filter_configure')) {
-        filter_configure();
-    }
-
-    if (function_exists('system_routing_configure')) {
-        system_routing_configure();
-    }
-
+    // Do NOT run filter_configure_sync / system_routing_configure / birdsync here —
+    // they blocked OPNsense boot for minutes. One deferred postboot job handles them.
     if ($verbose) {
-        echo "xray: boot setup complete\n";
+        echo "xray: boot setup complete (deferred birdsync)\n";
     }
-
-    xray_bird_sync_exec();
+    if (function_exists('xray_bird_sync_deferred')) {
+        xray_bird_sync_deferred();
+    }
 }
 
 /**

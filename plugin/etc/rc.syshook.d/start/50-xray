@@ -20,11 +20,18 @@ T2S_BIN="/usr/local/tun2socks/tun2socks"
 
 # v3.0.0: первый аргумент — inst_uuid конкретного инстанса (опционально)
 # Если не задан — обрабатываем все инстансы из config.xml
+# Второй аргумент "light" / boot flag: только TUN IP, без filter/interface/birdsync
 INST_UUID="${1:-}"
+LIGHT_ARG="${2:-}"
 
 ENABLED=$(php -r 'set_include_path("/usr/local/etc/inc" . PATH_SEPARATOR . get_include_path()); require_once("config.inc"); $cfg = OPNsense\Core\Config::getInstance()->object(); echo (string)($cfg->OPNsense->xray->general->enabled ?? "0");' 2>/dev/null)
 
-echo "enabled=[$ENABLED] inst_uuid=[$INST_UUID]"
+LIGHT_MODE=0
+if [ "$LIGHT_ARG" = "light" ] || [ -f /var/run/xray_boot_light ] || [ -f /var/run/booting ]; then
+    LIGHT_MODE=1
+fi
+
+echo "enabled=[$ENABLED] inst_uuid=[$INST_UUID] light=[$LIGHT_MODE]"
 
 [ "$ENABLED" = "1" ] || { echo "xray disabled, exit"; exit 0; }
 [ -f "$XRAY_BIN" ]   || { echo "xray-core not found"; exit 0; }
@@ -169,14 +176,15 @@ else
     done
 fi
 
-echo "reloading filter..."
-/usr/local/sbin/configctl filter reload 2>&1
-
-echo "reconfiguring interfaces..."
-/usr/local/sbin/configctl interface reconfigure 2>&1
-
-echo "syncing bird with tun2socks..."
-/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php birdsync 2>&1
+# Boot/light: TUN assignment only — filter/birdsync once via deferred birdsync_postboot.
+# Normal: optional filter reload; never birdsync here (N parallel syshooks hung boot).
+if [ "$LIGHT_MODE" = "1" ]; then
+    echo "light mode: skip filter reload / interface reconfigure / birdsync"
+else
+    echo "reloading filter..."
+    /usr/local/sbin/configctl filter reload 2>&1
+    echo "birdsync: skipped here (use configctl xray birdsync / deferred postboot)"
+fi
 
 echo "=== done: $(date) ==="
 exit 0

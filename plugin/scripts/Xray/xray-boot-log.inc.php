@@ -12,6 +12,16 @@ if (!defined('XRAY_AUTOROUTE_LOG')) {
 if (!defined('XRAY_BOOT_LOG_MAX')) {
     define('XRAY_BOOT_LOG_MAX', 50000);
 }
+/** Boot/light mode: start daemons only; defer SOCKS probes + birdsync. */
+if (!defined('XRAY_BOOT_LIGHT_FLAG')) {
+    define('XRAY_BOOT_LIGHT_FLAG', '/var/run/xray_boot_light');
+}
+if (!defined('XRAY_BIRDSYNC_DEFERRED_PID')) {
+    define('XRAY_BIRDSYNC_DEFERRED_PID', '/var/run/xray_birdsync_deferred.pid');
+}
+if (!defined('XRAY_BIRDSYNC_DEFERRED_DELAY')) {
+    define('XRAY_BIRDSYNC_DEFERRED_DELAY', 45);
+}
 
 function xray_log_file_rotate(string $path): void
 {
@@ -62,4 +72,73 @@ function xray_boot_log_block(string $title, string $body): void
 function xray_autoroute_log_block(string $title, string $body): void
 {
     xray_log_file_block(XRAY_AUTOROUTE_LOG, $title, $body);
+}
+
+/**
+ * True during OPNsense boot / plugin bootup hook: skip heavy SOCKS/birdsync/filter.
+ */
+function xray_boot_light_active(): bool
+{
+    if (is_file(XRAY_BOOT_LIGHT_FLAG)) {
+        return true;
+    }
+    // OPNsense creates this while the boot sequence is still running.
+    if (is_file('/var/run/booting')) {
+        return true;
+    }
+    return false;
+}
+
+function xray_boot_light_begin(): void
+{
+    @file_put_contents(XRAY_BOOT_LIGHT_FLAG, (string)time() . "\n");
+    @chmod(XRAY_BOOT_LIGHT_FLAG, 0644);
+}
+
+function xray_boot_light_end(): void
+{
+    @unlink(XRAY_BOOT_LIGHT_FLAG);
+}
+
+/**
+ * Schedule a single deferred birdsync (and post-boot filter reload) after $delaySec.
+ * Deduped via pid file so N instance starts / boot hooks share one job.
+ */
+function xray_bird_sync_deferred(int $delaySec = 0): void
+{
+    if ($delaySec <= 0) {
+        $delaySec = (int)XRAY_BIRDSYNC_DEFERRED_DELAY;
+    }
+    $pidFile = XRAY_BIRDSYNC_DEFERRED_PID;
+    if (is_readable($pidFile)) {
+        $old = (int)trim((string)file_get_contents($pidFile));
+        if ($old > 0) {
+            exec('/bin/kill -0 ' . $old . ' 2>/dev/null', $out, $rc);
+            if ($rc === 0) {
+                echo "bird sync: deferred already scheduled (pid {$old})\n";
+                return;
+            }
+        }
+    }
+    $php = '/usr/local/bin/php';
+    $script = '/usr/local/opnsense/scripts/Xray/xray-service-control.php';
+    if (!is_readable($script)) {
+        $script = __DIR__ . '/xray-service-control.php';
+    }
+    $cmd = sprintf(
+        '( /bin/sleep %d; /usr/bin/nice -n 10 %s %s birdsync_postboot >>%s 2>&1 ) >/dev/null 2>&1 & echo $!',
+        $delaySec,
+        escapeshellarg($php),
+        escapeshellarg($script),
+        escapeshellarg(XRAY_BOOT_LOG)
+    );
+    $pid = trim((string)shell_exec($cmd));
+    if ($pid !== '' && ctype_digit($pid)) {
+        @file_put_contents($pidFile, $pid . "\n");
+        @chmod($pidFile, 0644);
+        echo "bird sync: deferred in {$delaySec}s (pid {$pid})\n";
+        xray_boot_log("bird sync: deferred in {$delaySec}s (pid {$pid})");
+    } else {
+        echo "bird sync: WARN could not schedule deferred birdsync\n";
+    }
 }

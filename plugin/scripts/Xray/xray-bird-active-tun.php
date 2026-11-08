@@ -187,7 +187,7 @@ function xray_bird_active_tun_weight($raw): int
 
 /**
  * curl через SOCKS5. $ipFlag: '-4' или '-6'. Успех — HTTP 200–399.
- * Retries on HTTP 000 (SOCKS not ready yet during boot/syshook).
+ * Retries on HTTP 000 (SOCKS not ready yet). Skipped / short during boot light.
  * @return array{ok:bool,http:int,time:float,raw:string}
  */
 function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag, int $retries = 3): array
@@ -197,11 +197,23 @@ function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag, in
     }
     $ipFlag = ($ipFlag === '-6') ? '-6' : '-4';
     $proxy = xray_socks_connect_host($listen) . ':' . $port;
+    $bootLight = function_exists('xray_boot_light_active') && xray_boot_light_active();
+    if ($bootLight) {
+        // Boot: do not block OPNsense on SOCKS/curl; deferred birdsync_postboot probes later.
+        return [
+            'ok'   => false,
+            'http' => 0,
+            'time' => 0.0,
+            'raw'  => 'Код ответа: 000\nВремя ответа: 0 сек (boot light — probe skipped)',
+        ];
+    }
+    $waitSec = 10;
+    $tries = max(1, $retries);
+    $curlMax = 10;
     if (function_exists('xray_socks_wait_ready')) {
-        xray_socks_wait_ready($listen, $port, 10);
+        xray_socks_wait_ready($listen, $port, $waitSec);
     }
     $last = ['ok' => false, 'http' => 0, 'time' => 0.0, 'raw' => ''];
-    $tries = max(1, $retries);
     for ($i = 0; $i < $tries; $i++) {
         $out = [];
         $rc = 0;
@@ -211,7 +223,7 @@ function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag, in
             . ' -s -L -o /dev/null'
             . ' -w ' . escapeshellarg("Код ответа: %{http_code}\nВремя ответа: %{time_total} сек\n")
             . ' ' . escapeshellarg('https://google.com')
-            . ' --max-time 10',
+            . ' --max-time ' . $curlMax,
             $out,
             $rc
         );
@@ -742,45 +754,60 @@ function xray_bird_select_and_write_active_tun(): array
     $prev4        = xray_bird_active_tun_current(XRAY_BIRD_INC_DIR . '/active_tun_v4.inc', 'ACTIVE_TUN4_IF');
     $prev6        = xray_bird_active_tun_current(XRAY_BIRD_INC_DIR . '/active_tun_v6.inc', 'ACTIVE_TUN6_IF');
     $cands        = xray_bird_active_tun_candidates($ins);
+    $bootLight    = function_exists('xray_boot_light_active') && xray_boot_light_active();
 
-    foreach ($cands as $c) {
-        $uuid   = $c['uuid'];
-        $name   = $c['name'];
-        $tun    = $c['tun'];
-        $listen = $c['listen'];
-        $port   = $c['port'];
-        $w4     = $c['weight_v4'];
-        $w6     = $c['weight_v6'];
-
-        echo "active tun [{$name}] {$tun} socks {$listen}:{$port} weight4={$w4} weight6={$w6}\n";
-
-        $base = [
-            'uuid'      => $uuid,
-            'name'      => $name,
-            'tun'       => $tun,
-            'weight_v4' => $w4,
-            'weight_v6' => $w6,
-        ];
-        $probe4 = xray_bird_active_tun_curl($listen, $port, '-4');
-        echo "  -4: " . ($probe4['raw'] !== '' ? str_replace("\n", '; ', $probe4['raw']) : 'Код ответа: 0') . "\n";
-        if ($probe4['ok']) {
-            echo "  best -4: Код ответа: {$probe4['http']}; Время ответа: {$probe4['time']} сек\n";
-            $v4ok[] = $base + ['time' => $probe4['time']];
+    if ($bootLight) {
+        echo "active tun: boot light — skip SOCKS probes, pick by weight/fallback\n";
+        foreach ($cands as $c) {
+            $latency[$c['uuid']] = [
+                'tun'     => $c['tun'],
+                'name'    => $c['name'],
+                'v4_ok'   => false,
+                'v4_time' => 0.0,
+                'v6_ok'   => false,
+                'v6_time' => 0.0,
+            ];
         }
-        $probe6 = xray_bird_active_tun_curl($listen, $port, '-6');
-        echo "  -6: " . ($probe6['raw'] !== '' ? str_replace("\n", '; ', $probe6['raw']) : 'Код ответа: 0') . "\n";
-        if ($probe6['ok']) {
-            echo "  best -6: Код ответа: {$probe6['http']}; Время ответа: {$probe6['time']} сек\n";
-            $v6ok[] = $base + ['time' => $probe6['time']];
+    } else {
+        foreach ($cands as $c) {
+            $uuid   = $c['uuid'];
+            $name   = $c['name'];
+            $tun    = $c['tun'];
+            $listen = $c['listen'];
+            $port   = $c['port'];
+            $w4     = $c['weight_v4'];
+            $w6     = $c['weight_v6'];
+
+            echo "active tun [{$name}] {$tun} socks {$listen}:{$port} weight4={$w4} weight6={$w6}\n";
+
+            $base = [
+                'uuid'      => $uuid,
+                'name'      => $name,
+                'tun'       => $tun,
+                'weight_v4' => $w4,
+                'weight_v6' => $w6,
+            ];
+            $probe4 = xray_bird_active_tun_curl($listen, $port, '-4');
+            echo "  -4: " . ($probe4['raw'] !== '' ? str_replace("\n", '; ', $probe4['raw']) : 'Код ответа: 0') . "\n";
+            if ($probe4['ok']) {
+                echo "  best -4: Код ответа: {$probe4['http']}; Время ответа: {$probe4['time']} сек\n";
+                $v4ok[] = $base + ['time' => $probe4['time']];
+            }
+            $probe6 = xray_bird_active_tun_curl($listen, $port, '-6');
+            echo "  -6: " . ($probe6['raw'] !== '' ? str_replace("\n", '; ', $probe6['raw']) : 'Код ответа: 0') . "\n";
+            if ($probe6['ok']) {
+                echo "  best -6: Код ответа: {$probe6['http']}; Время ответа: {$probe6['time']} сек\n";
+                $v6ok[] = $base + ['time' => $probe6['time']];
+            }
+            $latency[$uuid] = [
+                'tun'     => $tun,
+                'name'    => $name,
+                'v4_ok'   => $probe4['ok'],
+                'v4_time' => $probe4['ok'] ? $probe4['time'] : 0.0,
+                'v6_ok'   => $probe6['ok'],
+                'v6_time' => $probe6['ok'] ? $probe6['time'] : 0.0,
+            ];
         }
-        $latency[$uuid] = [
-            'tun'     => $tun,
-            'name'    => $name,
-            'v4_ok'   => $probe4['ok'],
-            'v4_time' => $probe4['ok'] ? $probe4['time'] : 0.0,
-            'v6_ok'   => $probe6['ok'],
-            'v6_time' => $probe6['ok'] ? $probe6['time'] : 0.0,
-        ];
     }
 
     $best4 = xray_bird_active_tun_pick_or_fallback(

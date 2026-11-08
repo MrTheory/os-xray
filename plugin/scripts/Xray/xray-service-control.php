@@ -2,6 +2,7 @@
 <?php
 
 require_once('config.inc');
+require_once(__DIR__ . '/xray-boot-log.inc.php');
 require_once(__DIR__ . '/xray-bird-peers.php');
 require_once(__DIR__ . '/xray-bird-active-tun.php');
 require_once(__DIR__ . '/xray-dnstap-unbound.php');
@@ -652,8 +653,13 @@ function do_start(array $c): bool
             }
         }
 
-        // Назначаем IP на TUN через syshook (ждёт TUN, читает IP из config, reload firewall)
-        exec('/bin/sh /usr/local/etc/rc.syshook.d/start/50-xray ' . escapeshellarg($inst_uuid) . ' &');
+        // TUN IP via syshook. Boot/light: no filter/birdsync (deferred postboot).
+        $light = function_exists('xray_boot_light_active') && xray_boot_light_active();
+        $hookCmd = '/bin/sh /usr/local/etc/rc.syshook.d/start/50-xray '
+            . escapeshellarg($inst_uuid)
+            . ($light ? ' light' : '')
+            . ' &';
+        exec($hookCmd);
 
         echo "Started.\n";
         return true;
@@ -1094,8 +1100,28 @@ if ($inst_uuid !== '') {
 }
 
 switch ($action) {
+    case 'start_boot':
+        // Boot hook only: start daemons + light TUN setup; defer birdsync/BGP apply.
+        $exitCode = 0;
+        if ($inst_uuid !== '') {
+            $c = xray_get_config($inst_uuid);
+            if (empty($c) || !$c['enabled']) {
+                echo "Xray is disabled or instance not found.\n";
+            } else {
+                $exitCode = do_start($c) ? 0 : 1;
+            }
+        } else {
+            echo "start_boot requires instance uuid\n";
+            $exitCode = 1;
+        }
+        if (function_exists('xray_bird_sync_deferred')) {
+            xray_bird_sync_deferred();
+        }
+        exit($exitCode);
+
     case 'start':
         $exitCode = 0;
+        $bootLight = function_exists('xray_boot_light_active') && xray_boot_light_active();
         if ($inst_uuid !== '') {
             $c = xray_get_config($inst_uuid);
             if (empty($c) || !$c['enabled']) {
@@ -1117,6 +1143,14 @@ switch ($action) {
                 }
                 $exitCode = $anyFailed ? 1 : 0;
             }
+        }
+        if ($bootLight) {
+            // OPNsense service widget may call start during boot — stay light.
+            echo "start: boot light — defer BGP/DNStap/birdsync\n";
+            if (function_exists('xray_bird_sync_deferred')) {
+                xray_bird_sync_deferred();
+            }
+            exit($exitCode);
         }
         // Same as reconfigure: honor General → Enable BGP / DNStap (install Step 9 uses start).
         if (function_exists('xray_gateways_ensure_all')) {
@@ -1235,6 +1269,37 @@ switch ($action) {
 
     case 'birdsync':
         xray_bird_sync();
+        break;
+
+    case 'birdsync_postboot':
+        // One-shot after boot delay: clear light flag, filter reload once, full birdsync.
+        echo "==> birdsync_postboot\n";
+        if (function_exists('xray_boot_light_end')) {
+            xray_boot_light_end();
+        }
+        @unlink(defined('XRAY_BIRDSYNC_DEFERRED_PID') ? XRAY_BIRDSYNC_DEFERRED_PID : '/var/run/xray_birdsync_deferred.pid');
+        exec('/usr/local/sbin/configctl filter reload 2>&1', $filtOut, $filtRc);
+        echo 'filter reload rc=' . $filtRc
+            . ($filtOut !== [] ? (' ' . implode('; ', $filtOut)) : '') . "\n";
+        if (function_exists('xray_gateways_ensure_all')) {
+            xray_gateways_ensure_all();
+        }
+        if (!function_exists('xray_wan_routes_sync_all')) {
+            $wr = __DIR__ . '/xray-wan-static-routes.php';
+            if (is_readable($wr)) {
+                require_once $wr;
+            }
+        }
+        if (function_exists('xray_wan_routes_sync_all')) {
+            xray_wan_routes_sync_all(true);
+        }
+        xray_bird_write_peers();
+        xray_static_apply_general();
+        xray_bird_sync();
+        if (function_exists('xray_dnstap_apply_general')) {
+            xray_dnstap_apply_general();
+        }
+        echo "birdsync_postboot: done\n";
         break;
 
     case 'bgpwrite':
