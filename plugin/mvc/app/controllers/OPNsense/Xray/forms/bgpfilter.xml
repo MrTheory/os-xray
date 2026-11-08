@@ -1,0 +1,38 @@
+<form>
+    <field>
+        <id>filter.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Include this filter in filters.inc. Disabled filters are not loaded by BIRD.</help>
+    </field>
+    <field>
+        <id>filter.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>BIRD filter name (must be unique). Must match the include file name without .inc, e.g. NAME → /usr/local/etc/bird/NAME.inc. Use this name in a peer Import field.</help>
+        <hint>NAME</hint>
+    </field>
+    <field>
+        <id>filter.family</id>
+        <label>Address family</label>
+        <type>dropdown</type>
+        <help>IPv4 or IPv6. Each community block rejects the default route first (0.0.0.0/0 for IPv4, ::/0 for IPv6) before accepting other prefixes.</help>
+    </field>
+    <field>
+        <id>filter.community</id>
+        <label>Community</label>
+        <type>dropdown</type>
+        <help>Match this BGP community define. Together with Interface this is one IF block in the BIRD filter.</help>
+    </field>
+    <field>
+        <id>filter.tun_if</id>
+        <label>Interface</label>
+        <type>dropdown</type>
+        <help>Outgoing interface for this community block: ACTIVE_TUN4_IF, ACTIVE_TUN6_IF, WAN4, WAN6 or Null. WAN devices are set on General. Null writes dest = RTD_BLACKHOLE (no ifname). Use + / − to add or remove blocks; they are written before reject.</help>
+    </field>
+    <field>
+        <id>filter.blocks</id>
+        <label>Blocks</label>
+        <type>textbox</type>
+    </field>
+</form>

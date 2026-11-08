@@ -1,0 +1,60 @@
+<?xml version="1.0"?>
+<model>
+    <mount>//OPNsense/xray/bgpfilters</mount>
+    <description>Xray BGP filter settings</description>
+    <version>1.0.6</version>
+    <items>
+        <filter type="ArrayField">
+            <enabled type="BooleanField">
+                <Default>1</Default>
+            </enabled>
+            <name type="TextField">
+                <Required>Y</Required>
+                <Mask>/^[A-Za-z_][A-Za-z0-9_]*$/</Mask>
+                <ValidationMessage>BIRD filter name: letters, digits, underscore; must start with a letter or underscore</ValidationMessage>
+                <Constraints>
+                    <check001>
+                        <type>UniqueConstraint</type>
+                        <ValidationMessage>A BGP filter with this name already exists.</ValidationMessage>
+                    </check001>
+                </Constraints>
+            </name>
+            <family type="OptionField">
+                <Required>Y</Required>
+                <Default>ipv4</Default>
+                <OptionValues>
+                    <ipv4>IPv4</ipv4>
+                    <ipv6>IPv6</ipv6>
+                </OptionValues>
+            </family>
+            <community type="ModelRelationField">
+                <Required>N</Required>
+                <Multiple>N</Multiple>
+                <BlankDesc>none</BlankDesc>
+                <DisableCache>Y</DisableCache>
+                <Model>
+                    <bgpcommunity>
+                        <source>OPNsense.Xray.BgpCommunity</source>
+                        <items>community</items>
+                        <display>name</display>
+                    </bgpcommunity>
+                </Model>
+                <ValidationMessage>Select an existing BGP community, or none.</ValidationMessage>
+            </community>
+            <tun_if type="OptionField">
+                <Required>Y</Required>
+                <Default>ACTIVE_TUN4_IF</Default>
+                <OptionValues>
+                    <ACTIVE_TUN4_IF>ACTIVE_TUN4_IF</ACTIVE_TUN4_IF>
+                    <ACTIVE_TUN6_IF>ACTIVE_TUN6_IF</ACTIVE_TUN6_IF>
+                    <WAN4>WAN4</WAN4>
+                    <WAN6>WAN6</WAN6>
+                    <Null>Null</Null>
+                </OptionValues>
+            </tun_if>
+            <blocks type="TextField">
+                <Required>N</Required>
+            </blocks>
+        </filter>
+    </items>
+</model>

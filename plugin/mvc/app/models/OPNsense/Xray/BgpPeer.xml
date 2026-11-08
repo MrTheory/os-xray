@@ -1,0 +1,107 @@
+<?xml version="1.0"?>
+<model>
+    <mount>//OPNsense/xray/bgppeers</mount>
+    <description>Xray BGP peer settings</description>
+    <version>1.0.5</version>
+    <items>
+        <peer type="ArrayField">
+            <enabled type="BooleanField">
+                <Default>0</Default>
+            </enabled>
+            <name type="TextField">
+                <Required>Y</Required>
+                <Mask>/^[A-Za-z_][A-Za-z0-9_]*$/</Mask>
+                <ValidationMessage>BIRD protocol name: letters, digits, underscore; must start with a letter or underscore</ValidationMessage>
+                <Constraints>
+                    <check001>
+                        <type>UniqueConstraint</type>
+                        <ValidationMessage>A BGP peer with this name already exists.</ValidationMessage>
+                    </check001>
+                </Constraints>
+            </name>
+            <local_as type="IntegerField">
+                <Default>65103</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>4294967295</MaximumValue>
+                <Required>Y</Required>
+            </local_as>
+            <neighbor type="TextField">
+                <Required>Y</Required>
+                <Mask>/^([0-9]{1,3}(\.[0-9]{1,3}){3}|[0-9a-fA-F:]+|([A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?\.)*[A-Za-z0-9]([A-Za-z0-9\-]{0,61}[A-Za-z0-9])?)$/</Mask>
+                <ValidationMessage>Must be an IPv4/IPv6 address or hostname</ValidationMessage>
+            </neighbor>
+            <neighbor_as type="IntegerField">
+                <Default>65412</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>4294967295</MaximumValue>
+                <Required>Y</Required>
+            </neighbor_as>
+            <source_address type="TextField">
+                <Required>N</Required>
+            </source_address>
+            <ipv4 type="BooleanField">
+                <Default>1</Default>
+            </ipv4>
+            <ipv4_import type="ModelRelationField">
+                <Required>N</Required>
+                <Multiple>N</Multiple>
+                <BlankDesc>none</BlankDesc>
+                <DisableCache>Y</DisableCache>
+                <Model>
+                    <bgpfilter>
+                        <source>OPNsense.Xray.BgpFilter</source>
+                        <items>filter</items>
+                        <display>name</display>
+                    </bgpfilter>
+                </Model>
+                <ValidationMessage>Select an existing BGP filter, or none.</ValidationMessage>
+            </ipv4_import>
+            <ipv4_community_name type="TextField">
+                <Required>N</Required>
+            </ipv4_community_name>
+            <ipv4_community type="TextField">
+                <Required>N</Required>
+            </ipv4_community>
+            <ipv4_export type="TextField">
+                <Default>none</Default>
+                <Required>N</Required>
+            </ipv4_export>
+            <ipv6 type="BooleanField">
+                <Default>0</Default>
+            </ipv6>
+            <ipv6_import type="ModelRelationField">
+                <Required>N</Required>
+                <Multiple>N</Multiple>
+                <BlankDesc>none</BlankDesc>
+                <DisableCache>Y</DisableCache>
+                <Model>
+                    <bgpfilter>
+                        <source>OPNsense.Xray.BgpFilter</source>
+                        <items>filter</items>
+                        <display>name</display>
+                    </bgpfilter>
+                </Model>
+                <ValidationMessage>Select an existing BGP filter, or none.</ValidationMessage>
+            </ipv6_import>
+            <ipv6_community_name type="TextField">
+                <Required>N</Required>
+            </ipv6_community_name>
+            <ipv6_community type="TextField">
+                <Required>N</Required>
+            </ipv6_community>
+            <ipv6_export type="TextField">
+                <Default>none</Default>
+                <Required>N</Required>
+            </ipv6_export>
+            <multihop type="BooleanField">
+                <Default>1</Default>
+            </multihop>
+            <hold_time type="IntegerField">
+                <Default>240</Default>
+                <MinimumValue>3</MinimumValue>
+                <MaximumValue>65535</MaximumValue>
+                <Required>Y</Required>
+            </hold_time>
+        </peer>
+    </items>
+</model>

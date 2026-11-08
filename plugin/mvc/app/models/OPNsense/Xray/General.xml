@@ -2,16 +2,76 @@
 <model>
     <mount>//OPNsense/xray/general</mount>
     <description>Xray General Settings</description>
-    <version>1.0.1</version>
+    <version>1.0.11</version>
     <items>
         <enabled type="BooleanField">
-            <default>0</default>
+            <Default>0</Default>
             <Required>N</Required>
         </enabled>
+        <static_enabled type="BooleanField">
+            <Default>0</Default>
+            <Required>N</Required>
+        </static_enabled>
         <!-- E1: watchdog — автоперезапуск через cron при падении xray-core или tun2socks -->
         <watchdog_enabled type="BooleanField">
-            <default>0</default>
+            <Default>0</Default>
             <Required>N</Required>
         </watchdog_enabled>
+        <!-- Порядок обработки маршрутов (логика применения — позже) -->
+        <routing_strategy type="OptionField">
+            <Default>system_policy</Default>
+            <Required>Y</Required>
+            <OptionValues>
+                <system_policy>System policy</system_policy>
+                <block_proxy_direct>BLOCK-&gt;PROXY-&gt;DIRECT</block_proxy_direct>
+                <block_direct_proxy>BLOCK-&gt;DIRECT-&gt;PROXY</block_direct_proxy>
+            </OptionValues>
+        </routing_strategy>
+        <bgp_enabled type="BooleanField">
+            <Default>0</Default>
+            <Required>N</Required>
+        </bgp_enabled>
+        <bgp_if_wan4 type="TextField">
+            <Default></Default>
+            <Required>N</Required>
+            <Mask>/^([A-Za-z][A-Za-z0-9._-]*)?$/</Mask>
+            <ValidationMessage>WAN4 must be a FreeBSD interface name (e.g. em0), or empty.</ValidationMessage>
+        </bgp_if_wan4>
+        <bgp_if_wan6 type="TextField">
+            <Default></Default>
+            <Required>N</Required>
+            <Mask>/^([A-Za-z][A-Za-z0-9._-]*)?$/</Mask>
+            <ValidationMessage>WAN6 must be a FreeBSD interface name (e.g. em0), or empty.</ValidationMessage>
+        </bgp_if_wan6>
+        <dnstap_bgp_enabled type="BooleanField">
+            <Default>0</Default>
+            <Required>N</Required>
+        </dnstap_bgp_enabled>
+        <bgp_auto_route type="BooleanField">
+            <Default>0</Default>
+            <Required>N</Required>
+        </bgp_auto_route>
+        <bgp_weight_used_ipv4 type="BooleanField">
+            <Default>0</Default>
+            <Required>N</Required>
+        </bgp_weight_used_ipv4>
+        <bgp_weight_used_ipv6 type="BooleanField">
+            <Default>0</Default>
+            <Required>N</Required>
+        </bgp_weight_used_ipv6>
+        <bgp_auto_route_polls type="IntegerField">
+            <Default>3</Default>
+            <MinimumValue>1</MinimumValue>
+            <MaximumValue>20</MaximumValue>
+            <Required>Y</Required>
+            <ValidationMessage>Polls must be an integer from 1 to 20.</ValidationMessage>
+        </bgp_auto_route_polls>
+        <bgp_auto_route_interval type="IntegerField">
+            <Default>10</Default>
+            <MinimumValue>1</MinimumValue>
+            <MaximumValue>1440</MaximumValue>
+            <Required>Y</Required>
+            <ValidationMessage>Interval must be from 1 to 1440 minutes.</ValidationMessage>
+        </bgp_auto_route_interval>
     </items>
 </model>

@@ -1,7 +1,7 @@
 #!/bin/sh
 
-LOG="/tmp/xray_syshook.log"
-LOG_MAX=50000   # ~50 KB — максимальный размер лога перед ротацией (B11)
+LOG="/var/log/xray-boot.log"
+LOG_MAX=50000   # ~50 KB — soft rotate; newsyslog also rotates
 
 # B11: ротация лога
 if [ -f "$LOG" ]; then
@@ -20,15 +20,31 @@ T2S_BIN="/usr/local/tun2socks/tun2socks"
 
 # v3.0.0: первый аргумент — inst_uuid конкретного инстанса (опционально)
 # Если не задан — обрабатываем все инстансы из config.xml
+# Второй аргумент "light" / boot flag: только TUN IP, без filter/interface/birdsync
 INST_UUID="${1:-}"
+LIGHT_ARG="${2:-}"
 
 ENABLED=$(php -r 'set_include_path("/usr/local/etc/inc" . PATH_SEPARATOR . get_include_path()); require_once("config.inc"); $cfg = OPNsense\Core\Config::getInstance()->object(); echo (string)($cfg->OPNsense->xray->general->enabled ?? "0");' 2>/dev/null)
 
-echo "enabled=[$ENABLED] inst_uuid=[$INST_UUID]"
+LIGHT_MODE=0
+if [ "$LIGHT_ARG" = "light" ] || [ -f /var/run/xray_boot_light ] || [ -f /var/run/booting ]; then
+    LIGHT_MODE=1
+fi
+
+echo "enabled=[$ENABLED] inst_uuid=[$INST_UUID] light=[$LIGHT_MODE]"
 
 [ "$ENABLED" = "1" ] || { echo "xray disabled, exit"; exit 0; }
 [ -f "$XRAY_BIN" ]   || { echo "xray-core not found"; exit 0; }
 [ -f "$T2S_BIN" ]    || { echo "tun2socks not found"; exit 0; }
+
+# OPNsense runs every rc.syshook.d/start/* with no args during boot. Waiting
+# 10s × N for TUNs that do_start has not created yet blocks boot and races
+# birdsync_postboot. Per-instance hooks (do_start → 50-xray <uuid> light) assign IPs.
+if [ -z "$INST_UUID" ] && [ "$LIGHT_MODE" = "1" ]; then
+    echo "light mode: empty uuid (system syshook) — skip; wait for per-instance start_boot"
+    echo "=== done: $(date) ==="
+    exit 0
+fi
 
 # Функция: настроить TUN для одного инстанса
 setup_instance() {
@@ -84,26 +100,63 @@ setup_instance() {
     # Поднимаем интерфейс и назначаем MTU
     ifconfig "$TUN_IFACE" mtu "$MTU" up 2>&1
 
-    # Назначаем IP из OPNsense interfaces (BUG-2 FIX: через env)
-    TUN_IP=$(_TUN_IFACE="$TUN_IFACE" php -r '
+    # IPv4 — по флагу инстанса; IPv6 — всегда из OPNsense, если задан на интерфейсе
+    _TUN_ADDRS=$(_INST_UUID="$_INST_UUID" _TUN_IFACE="$TUN_IFACE" php -r '
         set_include_path("/usr/local/etc/inc" . PATH_SEPARATOR . get_include_path());
         require_once("config.inc");
-        $cfg = OPNsense\Core\Config::getInstance()->object();
-        $tun = getenv("_TUN_IFACE");
+        $cfg  = OPNsense\Core\Config::getInstance()->object();
+        $uuid = getenv("_INST_UUID");
+        $tun  = getenv("_TUN_IFACE");
         if (empty($tun)) $tun = "proxytun2socks0";
-        foreach ($cfg->interfaces->children() as $iface) {
-            if ((string)$iface->if === $tun) {
-                echo (string)$iface->ipaddr . "/" . (string)$iface->subnet;
+
+        $useIpv4 = true;
+        foreach ($cfg->OPNsense->xray->instances->instance as $inst) {
+            if ((string)$inst["uuid"] === $uuid) {
+                $useIpv4 = (string)($inst->use_ipv4 ?? "1") === "1";
                 break;
             }
         }
+        echo "USE_IPV4=" . ($useIpv4 ? "1" : "0") . "\n";
+
+        foreach ($cfg->interfaces->children() as $iface) {
+            if ((string)$iface->if !== $tun) {
+                continue;
+            }
+            $ipaddr = trim((string)$iface->ipaddr);
+            $subnet = trim((string)$iface->subnet);
+            if ($useIpv4 && $ipaddr !== "" && $subnet !== "") {
+                echo "TUN_IP=" . $ipaddr . "/" . $subnet . "\n";
+            }
+            $ipaddrv6 = trim((string)$iface->ipaddrv6);
+            $subnetv6 = trim((string)$iface->subnetv6);
+            if ($ipaddrv6 !== "" && $subnetv6 !== "") {
+                echo "TUN_IP6=" . $ipaddrv6 . "/" . $subnetv6 . "\n";
+            }
+            break;
+        }
     ' 2>/dev/null)
 
-    if [ -n "$TUN_IP" ]; then
-        echo "[${_INST_UUID}] assigning $TUN_IP to $TUN_IFACE..."
-        ifconfig "$TUN_IFACE" inet "$TUN_IP" 2>&1
+    eval "$_TUN_ADDRS"
+    TUN_IP="${TUN_IP:-}"
+    TUN_IP6="${TUN_IP6:-}"
+    USE_IPV4="${USE_IPV4:-1}"
+
+    if [ "$USE_IPV4" = "1" ]; then
+        if [ -n "$TUN_IP" ]; then
+            echo "[${_INST_UUID}] assigning inet $TUN_IP to $TUN_IFACE..."
+            ifconfig "$TUN_IFACE" inet "$TUN_IP" 2>&1
+        else
+            echo "[${_INST_UUID}] WARNING: IPv4 enabled but no IPv4 found in OPNsense interface config"
+        fi
     else
-        echo "[${_INST_UUID}] WARNING: no IP found in config, skipping IP assignment"
+        echo "[${_INST_UUID}] INFO: IPv4 routing disabled for instance, skipping IPv4 assignment"
+    fi
+
+    if [ -n "$TUN_IP6" ]; then
+        echo "[${_INST_UUID}] assigning inet6 $TUN_IP6 to $TUN_IFACE..."
+        ifconfig "$TUN_IFACE" inet6 "$TUN_IP6" 2>&1
+    else
+        echo "[${_INST_UUID}] INFO: no IPv6 configured on OPNsense interface, skipping IPv6 assignment"
     fi
 }
 
@@ -132,11 +185,15 @@ else
     done
 fi
 
-echo "reloading filter..."
-/usr/local/sbin/configctl filter reload 2>&1
-
-echo "reconfiguring interfaces..."
-/usr/local/sbin/configctl interface reconfigure 2>&1
+# Boot/light: TUN assignment only — filter/birdsync once via deferred birdsync_postboot.
+# Normal: optional filter reload; never birdsync here (N parallel syshooks hung boot).
+if [ "$LIGHT_MODE" = "1" ]; then
+    echo "light mode: skip filter reload / interface reconfigure / birdsync"
+else
+    echo "reloading filter..."
+    /usr/local/sbin/configctl filter reload 2>&1
+    echo "birdsync: skipped here (use configctl xray birdsync / deferred postboot)"
+fi
 
 echo "=== done: $(date) ==="
 exit 0

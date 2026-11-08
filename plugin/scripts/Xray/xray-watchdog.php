@@ -37,6 +37,14 @@ function proc_alive(string $pidfile): bool
     return $rc === 0;
 }
 
+function xray_bird_sync_from_watchdog(): void
+{
+    if (!file_exists(XRAY_CTRL)) {
+        return;
+    }
+    exec('/usr/local/bin/php ' . escapeshellarg(XRAY_CTRL) . ' birdsync 2>&1');
+}
+
 // ─── Читаем конфиг ────────────────────────────────────────────────────────────
 $cfg     = OPNsense\Core\Config::getInstance()->object();
 $general = $cfg->OPNsense->xray->general ?? null;
@@ -45,15 +53,18 @@ $enabled         = (string)($general->enabled          ?? '0') === '1';
 $watchdogEnabled = (string)($general->watchdog_enabled ?? '0') === '1';
 
 if (!$enabled) {
+    xray_bird_sync_from_watchdog();
     exit(0);
 }
 
 if (!$watchdogEnabled) {
+    xray_bird_sync_from_watchdog();
     exit(0);
 }
 
 $instances = $cfg->OPNsense->xray->instances ?? null;
 if (!$instances) {
+    xray_bird_sync_from_watchdog();
     exit(0);
 }
 
@@ -106,5 +117,7 @@ foreach ($instances->instance as $inst) {
         $anyFailed = true;
     }
 }
+
+xray_bird_sync_from_watchdog();
 
 exit($anyFailed ? 1 : 0);
