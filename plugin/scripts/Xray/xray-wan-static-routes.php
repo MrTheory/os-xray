@@ -228,11 +228,13 @@ function xray_wan_routes_parent($obj)
 }
 
 /**
- * @return list<array{network:string,gateway:string,descr:string}>
+ * @return array{routes:list<array{network:string,gateway:string,descr:string}>,keep_descrs:array<string,true>}
  */
 function xray_wan_routes_collect_desired(): array
 {
     $desired = [];
+    /** @var array<string,true> descrs whose DNS failed — keep existing XML routes */
+    $keepDescrs = [];
     $gw4 = xray_wan_routes_gateway_name('inet');
     $gw6 = xray_wan_routes_gateway_name('inet6');
 
@@ -240,7 +242,7 @@ function xray_wan_routes_collect_desired(): array
         $cfg = \OPNsense\Core\Config::getInstance()->object();
         $xray = $cfg->OPNsense->xray ?? null;
         if ($xray === null) {
-            return [];
+            return ['routes' => [], 'keep_descrs' => []];
         }
 
         // BGP peers (skip dnstap)
@@ -291,6 +293,9 @@ function xray_wan_routes_collect_desired(): array
                 }
                 if ($ips['v4'] === [] && $ips['v6'] === []) {
                     echo "wan-routes: WARN peer {$name} — no addresses for {$neighbor}\n";
+                    if ($isHost) {
+                        $keepDescrs[$descr] = true;
+                    }
                 }
             }
         }
@@ -360,6 +365,9 @@ function xray_wan_routes_collect_desired(): array
                 }
                 if ($ips['v4'] === [] && $ips['v6'] === []) {
                     echo "wan-routes: WARN instance {$label} — no addresses for {$addr}\n";
+                    if ($isHost) {
+                        $keepDescrs[$descr] = true;
+                    }
                 }
             }
         }
@@ -367,7 +375,7 @@ function xray_wan_routes_collect_desired(): array
         echo 'wan-routes: collect ERROR ' . $e->getMessage() . "\n";
     }
 
-    return $desired;
+    return ['routes' => $desired, 'keep_descrs' => $keepDescrs];
 }
 
 /**
@@ -390,7 +398,9 @@ function xray_wan_routes_sync_all(bool $applyRouting = true): bool
         );
     }
 
-    $desired = xray_wan_routes_collect_desired();
+    $collected = xray_wan_routes_collect_desired();
+    $desired = $collected['routes'] ?? [];
+    $keepDescrs = $collected['keep_descrs'] ?? [];
     $wantKeys = [];
     foreach ($desired as $d) {
         $wantKeys[strtolower($d['network'] . '|' . $d['gateway'] . '|' . $d['descr'])] = $d;
@@ -402,7 +412,7 @@ function xray_wan_routes_sync_all(bool $applyRouting = true): bool
         $obj = $cnf->object();
         $parent = xray_wan_routes_parent($obj);
 
-        // Remove obsolete managed routes
+        // Remove obsolete managed routes (keep when DNS failed — avoid PROXY-first death spiral)
         if (isset($parent->route)) {
             $removeNodes = [];
             foreach ($parent->route as $route) {
@@ -414,6 +424,10 @@ function xray_wan_routes_sync_all(bool $applyRouting = true): bool
                 $gw = trim((string)($route->gateway ?? ''));
                 $key = strtolower($net . '|' . $gw . '|' . $descr);
                 if (!isset($wantKeys[$key])) {
+                    if (isset($keepDescrs[$descr])) {
+                        echo "wan-routes: keep {$net} via {$gw} ({$descr}) — DNS failed, preserving\n";
+                        continue;
+                    }
                     $removeNodes[] = $route;
                     echo "wan-routes: remove {$net} via {$gw} ({$descr})\n";
                 } else {

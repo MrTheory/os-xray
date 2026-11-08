@@ -1274,12 +1274,30 @@ switch ($action) {
         break;
 
     case 'birdsync_postboot':
-        // One-shot after boot delay: clear light flag, filter reload once, full birdsync.
+        // One-shot after boot delay: wait for TUN, clear light flag, filter + birdsync.
         echo "==> birdsync_postboot\n";
+        @unlink(defined('XRAY_BIRDSYNC_DEFERRED_PID') ? XRAY_BIRDSYNC_DEFERRED_PID : '/var/run/xray_birdsync_deferred.pid');
+        $triesFile = defined('XRAY_BIRDSYNC_POSTBOOT_TRIES')
+            ? XRAY_BIRDSYNC_POSTBOOT_TRIES
+            : '/var/run/xray_birdsync_postboot_tries';
+        $maxTries = defined('XRAY_BIRDSYNC_POSTBOOT_MAX_TRIES')
+            ? (int)XRAY_BIRDSYNC_POSTBOOT_MAX_TRIES
+            : 5;
+        $try = is_readable($triesFile) ? ((int)trim((string)file_get_contents($triesFile)) + 1) : 1;
+        @file_put_contents($triesFile, (string)$try . "\n");
+        // Daemons may still be starting; do not clear light / probe / strip routes yet.
+        if (function_exists('xray_boot_wait_tun2socks') && !xray_boot_wait_tun2socks(90, 2)) {
+            if ($try < $maxTries && function_exists('xray_bird_sync_deferred')) {
+                echo "birdsync_postboot: try {$try}/{$maxTries} — reschedule in 30s (keep light flag)\n";
+                xray_bird_sync_deferred(30);
+                exit(0);
+            }
+            echo "birdsync_postboot: try {$try}/{$maxTries} — proceed without tun2socks\n";
+        }
+        @unlink($triesFile);
         if (function_exists('xray_boot_light_end')) {
             xray_boot_light_end();
         }
-        @unlink(defined('XRAY_BIRDSYNC_DEFERRED_PID') ? XRAY_BIRDSYNC_DEFERRED_PID : '/var/run/xray_birdsync_deferred.pid');
         exec('/usr/local/sbin/configctl filter reload 2>&1', $filtOut, $filtRc);
         echo 'filter reload rc=' . $filtRc
             . ($filtOut !== [] ? (' ' . implode('; ', $filtOut)) : '') . "\n";

@@ -22,6 +22,12 @@ if (!defined('XRAY_BIRDSYNC_DEFERRED_PID')) {
 if (!defined('XRAY_BIRDSYNC_DEFERRED_DELAY')) {
     define('XRAY_BIRDSYNC_DEFERRED_DELAY', 45);
 }
+if (!defined('XRAY_BIRDSYNC_POSTBOOT_TRIES')) {
+    define('XRAY_BIRDSYNC_POSTBOOT_TRIES', '/var/run/xray_birdsync_postboot_tries');
+}
+if (!defined('XRAY_BIRDSYNC_POSTBOOT_MAX_TRIES')) {
+    define('XRAY_BIRDSYNC_POSTBOOT_MAX_TRIES', 5);
+}
 
 function xray_log_file_rotate(string $path): void
 {
@@ -95,11 +101,53 @@ function xray_boot_light_begin(): void
 {
     @file_put_contents(XRAY_BOOT_LIGHT_FLAG, (string)time() . "\n");
     @chmod(XRAY_BOOT_LIGHT_FLAG, 0644);
+    if (defined('XRAY_BIRDSYNC_POSTBOOT_TRIES')) {
+        @unlink(XRAY_BIRDSYNC_POSTBOOT_TRIES);
+    }
 }
 
 function xray_boot_light_end(): void
 {
     @unlink(XRAY_BOOT_LIGHT_FLAG);
+}
+
+/**
+ * True if any enabled instance has a live tun2socks PID.
+ */
+function xray_boot_any_tun2socks_up(): bool
+{
+    $pattern = '/var/run/tun2socks_*.pid';
+    foreach (glob($pattern) ?: [] as $pidFile) {
+        $pid = (int)trim((string)@file_get_contents($pidFile));
+        if ($pid <= 0) {
+            continue;
+        }
+        exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $out, $rc);
+        if ($rc === 0) {
+            return true;
+        }
+    }
+    return false;
+}
+
+/**
+ * Poll until tun2socks is up or timeout. Returns true if ready.
+ */
+function xray_boot_wait_tun2socks(int $timeoutSec = 90, int $stepSec = 2): bool
+{
+    $deadline = time() + max(1, $timeoutSec);
+    $stepSec = max(1, $stepSec);
+    while (true) {
+        if (xray_boot_any_tun2socks_up()) {
+            echo "birdsync_postboot: tun2socks ready\n";
+            return true;
+        }
+        if (time() >= $deadline) {
+            echo "birdsync_postboot: tun2socks not up after {$timeoutSec}s\n";
+            return false;
+        }
+        sleep($stepSec);
+    }
 }
 
 /**

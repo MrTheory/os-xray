@@ -79,68 +79,40 @@ function xray_configure_do(bool $verbose = false): void
             continue;
         }
 
-        $xrayPid   = "/var/run/xray_core_{$inst_uuid}.pid";
-        $t2sPid    = "/var/run/tun2socks_{$inst_uuid}.pid";
-        $lockFile  = "/var/run/xray_start_{$inst_uuid}.lock";
+        $xrayPid = "/var/run/xray_core_{$inst_uuid}.pid";
+        $t2sPid  = "/var/run/tun2socks_{$inst_uuid}.pid";
 
-        // BUG-1 FIX: per-instance lock без goto. Если lock занят — пропускаем.
-        $lockFd       = false;
-        $lockAcquired = false;
-        $shouldStart  = false;
-
-        $lockFd = fopen($lockFile, 'c');
-        if ($lockFd !== false) {
-            if (flock($lockFd, LOCK_EX | LOCK_NB)) {
-                $lockAcquired = true;
-                fwrite($lockFd, (string)getmypid());
-                fflush($lockFd);
-                $shouldStart = true;
-            } else {
-                if ($verbose) {
-                    echo "xray [{$inst_uuid}]: start already in progress (lock held), skipping\n";
-                }
-                fclose($lockFd);
-                $lockFd = false;
-            }
+        // Do NOT hold xray_start_*.lock here: start_boot → do_start needs that same
+        // flock in a child PHP process; parent LOCK_EX made every start_boot skip.
+        $xrayRunning = false;
+        if (file_exists($xrayPid)) {
+            $pid = (int)trim((string)file_get_contents($xrayPid));
+            exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $out, $rc);
+            $xrayRunning = ($rc === 0);
+        }
+        $t2sRunning = false;
+        if (file_exists($t2sPid)) {
+            $pid = (int)trim((string)file_get_contents($t2sPid));
+            exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $out, $rc);
+            $t2sRunning = ($rc === 0);
         }
 
-        if ($shouldStart) {
-            try {
-                $xrayRunning = false;
-                if (file_exists($xrayPid)) {
-                    $pid = (int)trim(file_get_contents($xrayPid));
-                    exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $out, $rc);
-                    $xrayRunning = ($rc === 0);
-                }
-                $t2sRunning = false;
-                if (file_exists($t2sPid)) {
-                    $pid = (int)trim(file_get_contents($t2sPid));
-                    exec('/bin/kill -0 ' . $pid . ' 2>/dev/null', $out, $rc);
-                    $t2sRunning = ($rc === 0);
-                }
+        if ($xrayRunning && $t2sRunning) {
+            continue;
+        }
 
-                if (!$xrayRunning || !$t2sRunning) {
-                    if ($verbose) {
-                        echo "xray [{$inst_uuid}]: starting via xray-service-control.php...\n";
-                    }
-                    // start_boot: daemons + light TUN setup only (no BGP/SOCKS/birdsync).
-                    exec('/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php start_boot '
-                        . escapeshellarg($inst_uuid) . ' 2>&1', $startOut, $startRc);
-                    if ($verbose && !empty($startOut)) {
-                        echo implode("\n", $startOut) . "\n";
-                    }
-                    if ($startRc !== 0 && $verbose) {
-                        echo "xray [{$inst_uuid}]: start_boot returned exit {$startRc}\n";
-                    }
-                }
-            } finally {
-                // BUG-1 FIX: lock освобождается гарантированно
-                if ($lockFd !== false) {
-                    flock($lockFd, LOCK_UN);
-                    fclose($lockFd);
-                    @unlink($lockFile);
-                }
-            }
+        if ($verbose) {
+            echo "xray [{$inst_uuid}]: starting via xray-service-control.php...\n";
+        }
+        // start_boot: daemons + light TUN setup only (no BGP/SOCKS/birdsync).
+        // Locking is entirely inside do_start.
+        exec('/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php start_boot '
+            . escapeshellarg($inst_uuid) . ' 2>&1', $startOut, $startRc);
+        if ($verbose && !empty($startOut)) {
+            echo implode("\n", $startOut) . "\n";
+        }
+        if ($startRc !== 0 && $verbose) {
+            echo "xray [{$inst_uuid}]: start_boot returned exit {$startRc}\n";
         }
     }
 

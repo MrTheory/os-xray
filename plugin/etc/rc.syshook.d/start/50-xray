@@ -37,6 +37,15 @@ echo "enabled=[$ENABLED] inst_uuid=[$INST_UUID] light=[$LIGHT_MODE]"
 [ -f "$XRAY_BIN" ]   || { echo "xray-core not found"; exit 0; }
 [ -f "$T2S_BIN" ]    || { echo "tun2socks not found"; exit 0; }
 
+# OPNsense runs every rc.syshook.d/start/* with no args during boot. Waiting
+# 10s × N for TUNs that do_start has not created yet blocks boot and races
+# birdsync_postboot. Per-instance hooks (do_start → 50-xray <uuid> light) assign IPs.
+if [ -z "$INST_UUID" ] && [ "$LIGHT_MODE" = "1" ]; then
+    echo "light mode: empty uuid (system syshook) — skip; wait for per-instance start_boot"
+    echo "=== done: $(date) ==="
+    exit 0
+fi
+
 # Функция: настроить TUN для одного инстанса
 setup_instance() {
     _INST_UUID="$1"
