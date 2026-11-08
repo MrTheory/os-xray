@@ -75,18 +75,20 @@ function xray_autoroute_log_block(string $title, string $body): void
 }
 
 /**
- * True during OPNsense boot / plugin bootup hook: skip heavy SOCKS/birdsync/filter.
+ * True while our light flag is set (syshook / start_boot → cleared in birdsync_postboot).
+ * Do NOT key off /var/run/booting here: OPNsense keeps that file until the whole boot
+ * finishes (often well past the deferred postboot), which would skip SOCKS forever
+ * during postboot + early cron (Auto route / IF health).
  */
 function xray_boot_light_active(): bool
 {
-    if (is_file(XRAY_BOOT_LIGHT_FLAG)) {
-        return true;
-    }
-    // OPNsense creates this while the boot sequence is still running.
-    if (is_file('/var/run/booting')) {
-        return true;
-    }
-    return false;
+    return is_file(XRAY_BOOT_LIGHT_FLAG);
+}
+
+/** OPNsense still in early boot — used only to *enter* light mode / schedule defer. */
+function xray_opnsense_booting(): bool
+{
+    return is_file('/var/run/booting');
 }
 
 function xray_boot_light_begin(): void

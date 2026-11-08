@@ -1121,6 +1121,8 @@ switch ($action) {
 
     case 'start':
         $exitCode = 0;
+        // Only our flag (set by configure_do / start_boot; cleared in birdsync_postboot).
+        // Do not re-enter light from /var/run/booting — OPNsense may keep it after postboot.
         $bootLight = function_exists('xray_boot_light_active') && xray_boot_light_active();
         if ($inst_uuid !== '') {
             $c = xray_get_config($inst_uuid);
