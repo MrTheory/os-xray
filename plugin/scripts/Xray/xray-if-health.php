@@ -129,7 +129,7 @@ if ($activeFailed !== []) {
         echo "if health: {$selMsg}\n";
     } else {
         echo "if health: reselecting active tun\n";
-        $sel = xray_bird_select_and_write_active_tun();
+        $sel = xray_bird_select_and_write_active_tun(true);
         if (!empty($sel['changed'])) {
             $cfgObj = OPNsense\Core\Config::getInstance()->object();
             $bgpOn  = (string)($cfgObj->OPNsense->xray->general->bgp_enabled ?? '0') === '1';

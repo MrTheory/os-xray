@@ -80,15 +80,31 @@ function xray_autoroute_log_block(string $title, string $body): void
     xray_log_file_block(XRAY_AUTOROUTE_LOG, $title, $body);
 }
 
+if (!defined('XRAY_BOOT_LIGHT_MAX_AGE')) {
+    // Deferred 45s + wait 90s × retries + headroom. Stale flag must not poison GUI forever.
+    define('XRAY_BOOT_LIGHT_MAX_AGE', 600);
+}
+
 /**
  * True while our light flag is set (syshook / start_boot → cleared in birdsync_postboot).
  * Do NOT key off /var/run/booting here: OPNsense keeps that file until the whole boot
  * finishes (often well past the deferred postboot), which would skip SOCKS forever
  * during postboot + early cron (Auto route / IF health).
+ * Auto-expires after XRAY_BOOT_LIGHT_MAX_AGE if postboot never cleared the flag.
  */
 function xray_boot_light_active(): bool
 {
-    return is_file(XRAY_BOOT_LIGHT_FLAG);
+    if (!is_file(XRAY_BOOT_LIGHT_FLAG)) {
+        return false;
+    }
+    $mtime = @filemtime(XRAY_BOOT_LIGHT_FLAG);
+    $age = ($mtime !== false) ? (time() - (int)$mtime) : 0;
+    $maxAge = (int)XRAY_BOOT_LIGHT_MAX_AGE;
+    if ($maxAge > 0 && $age > $maxAge) {
+        @unlink(XRAY_BOOT_LIGHT_FLAG);
+        return false;
+    }
+    return true;
 }
 
 /** OPNsense still in early boot — used only to *enter* light mode / schedule defer. */

@@ -190,14 +190,16 @@ function xray_bird_active_tun_weight($raw): int
  * Retries on HTTP 000 (SOCKS not ready yet). Skipped / short during boot light.
  * @return array{ok:bool,http:int,time:float,raw:string}
  */
-function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag, int $retries = 3): array
+function xray_bird_active_tun_curl(string $listen, int $port, string $ipFlag, int $retries = 3, bool $forceProbes = false): array
 {
     if ($port < 1 || $port > 65535) {
         $port = 10808;
     }
     $ipFlag = ($ipFlag === '-6') ? '-6' : '-4';
     $proxy = xray_socks_connect_host($listen) . ':' . $port;
-    $bootLight = function_exists('xray_boot_light_active') && xray_boot_light_active();
+    $bootLight = !$forceProbes
+        && function_exists('xray_boot_light_active')
+        && xray_boot_light_active();
     if ($bootLight) {
         // Boot: do not block OPNsense on SOCKS/curl; deferred birdsync_postboot probes later.
         return [
@@ -601,6 +603,11 @@ function xray_bird_autoroute_tick(): void
         echo "auto route: disabled\n";
         return;
     }
+    // Do not record fake 000 polls into autoroute state / GUI while boot light is on.
+    if (function_exists('xray_boot_light_active') && xray_boot_light_active()) {
+        echo "auto route: boot light — skip poll (no SOCKS / no GUI overwrite)\n";
+        return;
+    }
 
     if (function_exists('xray_gateways_ensure_missing_instances_pre_autoroute')) {
         xray_gateways_ensure_missing_instances_pre_autoroute();
@@ -729,9 +736,10 @@ function xray_bird_autoroute_tick(): void
  * Старт BIRD / Enable BGP Apply: по одному curl на семейство.
  * Серия попыток Auto route сюда не входит — только cron.
  *
+ * @param bool $forceProbes GUI / IF-health: always curl (ignore stuck boot-light flag)
  * @return array{ok:bool, changed:bool}
  */
-function xray_bird_select_and_write_active_tun(): array
+function xray_bird_select_and_write_active_tun(bool $forceProbes = false): array
 {
     $cfg     = OPNsense\Core\Config::getInstance()->object();
     $general = $cfg->OPNsense->xray->general ?? null;
@@ -754,20 +762,13 @@ function xray_bird_select_and_write_active_tun(): array
     $prev4        = xray_bird_active_tun_current(XRAY_BIRD_INC_DIR . '/active_tun_v4.inc', 'ACTIVE_TUN4_IF');
     $prev6        = xray_bird_active_tun_current(XRAY_BIRD_INC_DIR . '/active_tun_v6.inc', 'ACTIVE_TUN6_IF');
     $cands        = xray_bird_active_tun_candidates($ins);
-    $bootLight    = function_exists('xray_boot_light_active') && xray_boot_light_active();
+    $bootLight    = !$forceProbes
+        && function_exists('xray_boot_light_active')
+        && xray_boot_light_active();
 
     if ($bootLight) {
         echo "active tun: boot light — skip SOCKS probes, pick by weight/fallback\n";
-        foreach ($cands as $c) {
-            $latency[$c['uuid']] = [
-                'tun'     => $c['tun'],
-                'name'    => $c['name'],
-                'v4_ok'   => false,
-                'v4_time' => 0.0,
-                'v6_ok'   => false,
-                'v6_time' => 0.0,
-            ];
-        }
+        // Do NOT fill latency with ok=false — that paints Active TUN=0 and Test Result red in GUI.
     } else {
         foreach ($cands as $c) {
             $uuid   = $c['uuid'];
@@ -787,13 +788,13 @@ function xray_bird_select_and_write_active_tun(): array
                 'weight_v4' => $w4,
                 'weight_v6' => $w6,
             ];
-            $probe4 = xray_bird_active_tun_curl($listen, $port, '-4');
+            $probe4 = xray_bird_active_tun_curl($listen, $port, '-4', 3, $forceProbes);
             echo "  -4: " . ($probe4['raw'] !== '' ? str_replace("\n", '; ', $probe4['raw']) : 'Код ответа: 0') . "\n";
             if ($probe4['ok']) {
                 echo "  best -4: Код ответа: {$probe4['http']}; Время ответа: {$probe4['time']} сек\n";
                 $v4ok[] = $base + ['time' => $probe4['time']];
             }
-            $probe6 = xray_bird_active_tun_curl($listen, $port, '-6');
+            $probe6 = xray_bird_active_tun_curl($listen, $port, '-6', 3, $forceProbes);
             echo "  -6: " . ($probe6['raw'] !== '' ? str_replace("\n", '; ', $probe6['raw']) : 'Код ответа: 0') . "\n";
             if ($probe6['ok']) {
                 echo "  best -6: Код ответа: {$probe6['http']}; Время ответа: {$probe6['time']} сек\n";
@@ -827,7 +828,11 @@ function xray_bird_select_and_write_active_tun(): array
     $res = xray_bird_active_tun_commit($best4, $best6, $prev4, $prev6);
     $act4 = $best4['tun'] ?? $prev4;
     $act6 = $best6['tun'] ?? $prev6;
-    xray_bird_latency_save($latency, $act4, $act6);
+    if ($bootLight) {
+        echo "active tun: boot light — keep last Active TUN / Test Result (no zero overwrite)\n";
+    } else {
+        xray_bird_latency_save($latency, $act4, $act6);
+    }
     if (function_exists('xray_gateways_apply_autoroute_priorities')) {
         $rows = [];
         foreach ($latency as $uuid => $L) {
@@ -899,8 +904,12 @@ if (count(debug_backtrace()) === 0) {
         if ($mode === 'autoroute') {
             xray_bird_autoroute_tick();
         } else {
-            // mode "run" (background from GUI) or any other → one-shot select
-            $sel = xray_bird_select_and_write_active_tun();
+            // GUI Test auto route / manual: always real SOCKS probes; clear stuck light flag.
+            $forceProbes = ($mode === 'run' || $mode === 'force');
+            if ($forceProbes && function_exists('xray_boot_light_end')) {
+                xray_boot_light_end();
+            }
+            $sel = xray_bird_select_and_write_active_tun($forceProbes);
             if (!empty($sel['changed'])) {
                 $cfg = OPNsense\Core\Config::getInstance()->object();
                 $bgpOn = (string)($cfg->OPNsense->xray->general->bgp_enabled ?? '0') === '1';
