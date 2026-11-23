@@ -77,6 +77,7 @@ $ifconfig = implode("\n", $ifOut);
 
 // Парсим ключевые поля
 $tunIp     = '';
+$tunIp6    = '';
 $tunMask   = '';
 $tunStatus = 'no carrier';
 $bytesIn   = 0;
@@ -103,6 +104,13 @@ if ($ifRc === 0) {
         } else {
             $tunMask = '/' . $hexMask;
         }
+    }
+    if (preg_match('/inet6\s+([0-9a-f:]+)(?:%|\s)/i', $ifconfig, $m6)) {
+        $prefix = '';
+        if (preg_match('/inet6\s+[0-9a-f:]+%?[0-9a-z_]*\s+prefixlen\s+(\d+)/i', $ifconfig, $pm6)) {
+            $prefix = '/' . $pm6[1];
+        }
+        $tunIp6 = $m6[1] . $prefix;
     }
     // flags: UP,RUNNING → статус
     if (preg_match('/flags=\S+<([^>]+)>/', $ifconfig, $m)) {
@@ -179,11 +187,25 @@ function format_bytes(int $bytes): string
     return round($bytes / (1024 ** $i), 1) . ' ' . $units[$i];
 }
 
+$useIpv4 = true;
+$useIpv6 = false;
+$ipStack = 'IPv4';
+$dnsServers = '1.1.1.1,8.8.8.8';
+if ($inst !== null) {
+    $useIpv4 = (string)($inst->use_ipv4 ?? '1') === '1';
+    $useIpv6 = (string)($inst->use_ipv6 ?? '0') === '1';
+    $ipStack = ($useIpv4 && $useIpv6) ? 'IPv4+IPv6' : ($useIpv6 ? 'IPv6' : 'IPv4');
+    $dnsServers = trim((string)($inst->dns_servers ?? '1.1.1.1,8.8.8.8')) ?: '1.1.1.1,8.8.8.8';
+}
+
 // ─── Сборка результата ────────────────────────────────────────────────────────
 $result = [
     'tun_interface' => $tunIface,
     'tun_status'    => $tunIface !== '' ? $tunStatus : 'no interface configured',
     'tun_ip'        => $tunIp ? ($tunIp . $tunMask) : '',
+    'tun_ip6'       => $tunIp6,
+    'ip_stack'      => $ipStack,
+    'dns_servers'   => $dnsServers,
     'mtu'           => $mtu,
     'bytes_in'      => $bytesIn,
     'bytes_out'     => $bytesOut,

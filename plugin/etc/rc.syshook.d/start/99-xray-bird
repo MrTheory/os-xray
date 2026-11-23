@@ -1,0 +1,3 @@
+#!/bin/sh
+# Start BIRD only when BGP is enabled and at least one tun2socks is running.
+exec /usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php birdsync

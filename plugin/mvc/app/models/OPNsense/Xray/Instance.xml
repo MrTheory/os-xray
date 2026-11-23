@@ -5,15 +5,15 @@
     <!-- v3.0.0: ArrayField multi-instance + vless_uuid rename (breaking change от v2.x) -->
     <!-- Каждый инстанс получает уникальный UUID от OPNsense BaseModel. -->
     <!-- Миграция: install.sh конвертирует <instance> → <instances><instance uuid="...">, uuid → vless_uuid -->
-    <version>3.0.0</version>
+    <version>3.1.2</version>
     <items>
         <instance type="ArrayField">
             <enabled type="BooleanField">
                 <Default>1</Default>
             </enabled>
-            <!-- Имя инстанса для отображения в таблице GUI -->
+            <!-- Имя инстанса для отображения в таблице GUI (пустое по умолчанию — без фантома default) -->
             <name type="TextField">
-                <Default>default</Default>
+                <Default></Default>
                 <Required>N</Required>
             </name>
             <outbound_config type="TextField">
@@ -44,6 +44,33 @@
                 <MaximumValue>9000</MaximumValue>
                 <Required>Y</Required>
             </mtu>
+            <!-- v3.1.0: IP stack selection for TUN assignment and xray DNS/routing -->
+            <use_ipv4 type="BooleanField">
+                <Default>1</Default>
+            </use_ipv4>
+            <use_ipv6 type="BooleanField">
+                <Default>0</Default>
+            </use_ipv6>
+            <!-- v3.1.0: per-instance DNS servers for generated xray config -->
+            <dns_servers type="TextField">
+                <Default>1.1.1.1,8.8.8.8</Default>
+                <Required>N</Required>
+            </dns_servers>
+            <!-- v3.1.2: per-family instance weights stored in plugin config (1–1000) -->
+            <weight_ipv4 type="IntegerField">
+                <Default>1</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>1000</MaximumValue>
+                <Required>Y</Required>
+                <ValidationMessage>Weight IPv4 must be an integer from 1 to 1000.</ValidationMessage>
+            </weight_ipv4>
+            <weight_ipv6 type="IntegerField">
+                <Default>1</Default>
+                <MinimumValue>1</MinimumValue>
+                <MaximumValue>1000</MaximumValue>
+                <Required>Y</Required>
+                <ValidationMessage>Weight IPv6 must be an integer from 1 to 1000.</ValidationMessage>
+            </weight_ipv6>
             <!-- v1.0.4: bypass_networks — CIDR-список сетей для direct routing -->
             <bypass_networks type="TextField">
                 <Default>10.0.0.0/8,172.16.0.0/12,192.168.0.0/16</Default>

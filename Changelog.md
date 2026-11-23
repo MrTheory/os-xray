@@ -5,17 +5,90 @@ Format: [Semantic Versioning](https://semver.org/).
 
 ---
 
+## [3.1.0] - TBD
+### Fixed
+- reinstall — сброс Mark Gateway as Down (`force_down`) у всех instance GW inet/inet6 (после uninstall флаг зависал на IPv6, кроме «лучшего» ACTIVE_TUN)
+- PROXY-first — `ensure_kernel_default` не сносит TUN→WAN и не делает raw `route add` на Far Gateway peer (Invalid argument); default ставит OPNsense routes configure
+- reinstall — `xray start` снова поднимает DNStap/BGP по флагам General (раньше только Apply/reconfigure); install Step 9b для DNStap если Xray off
+- Instances — Test result синхронизируется с ACTIVE TUN SOCKS-пробами (после uninstall колонка не пустая до cron ifhealth)
+- uninstall — WAN Upstream в UI без default в `netstat`: restore до и после stop TUN, `force_down` на instance GW, явная установка kernel default
+- Domain check — колонки Class/List (community vs proxy/direct/block.txt); подсказка при CDN/stale DIRECT vs List PROXY
+- DNStap summarize — subdomain из DIRECT/URL не остаётся, если родитель уже в PROXY/BLOCK (Extra PROXY `xboxservices.com` перекрывает `fern.xboxservices.com` из DIRECT)
+- `filter_dnstap_v*` — seed блоков PROXY→ACTIVE_TUN, DIRECT→WAN, BLOCK→Null
+- tun2socks v2 — старт с `--config` (pflag: `-config` читается как `-c onfig` и падает `open onfig`)
+- BIRD filter dnstap — `print` net и `bgp_community` входящего маршрута в лог (bird2: `echo` — syntax error)
+- full help на всех вкладках справа, как на General
+- DNStap / Domains — фон ячеек из темы OPNsense (жёсткий `#f9f9f9`/`#333` давал белый нечитаемый фон)
+- Падение GUI после установки — `ensureDnstapPeerFilters` вызывал ValidationException (кэш ModelRelationField ещё без новых фильтров); seed/ensure пишут config без валидации и больше не роняют `/ui/xray/`
+- Help на всех вкладках как на General: переключатель full help, иконка у поля, текст под полем; кнопка Help на DNStap заменена
+- Routing — dropdown фильтров у пира и community у фильтра берёт все записи из config (кэш ModelRelationField обрезал список); пиру dnstap по умолчанию назначаются `filter_dnstap_v4`/`v6` и `community_DNSTAP_PROXY`
+- **sysrc quoting** — `bird_enable` / `dnstap_bgp_enable` писались как `""YES""` и на каждом Apply дописывались; строки в rc.conf переписываются целиком, `dnstap_bgp_enable` только в `rc.conf.d` (битая строка из `/etc/rc.conf` удаляется)
+- **dnstap-bgp `bgp.as`** — в TOML писался как строка `"65103"`, демон ждёт integer; теперь `as = 65103` без кавычек
+- **DNStap IPv6 → BIRD** — чекбокс Enable IPv6 включает `ipv6 {}` у peer dnstap и исключает его при выключении; Apply/Start делают `birdc configure`
+- **DNStap Apply exit 255** — `xray-dnstap-conf.php write` подключает `config.inc` и ловит ошибки sync BIRD, чтобы configd не падал с status 255
+- **BIRD `log syslog` default** — при установке в `bird.conf` принудительно `log syslog { warning };` (пакет bird2 оставляет `all`)
+- **tun2socks "interface already exists"** — перед стартом удаляется stale TUN, если процесс не запущен; boot hook делегирует start в `xray-service-control.php`
+- **TUN cleanup on instance delete** — при удалении instance через GUI вызывается `xray delete`: stop, destroy TUN, удаление per-instance конфигов/PID/логов
+- **Invalid routing.domainStrategy** — `UseIPv4`/`UseIPv6` недопустимы в routing (только в dns.queryStrategy); routing всегда `IPIfNonMatch`, иначе `xray -test` падал и start не завершался; запись config-*.json теперь с явной проверкой ошибок
+- **TUN lifecycle aligned with upstream** — на stop не вызываем `ifconfig destroy` (TUN убирает tun2socks); destroy только для stale iface перед start и при delete instance; Prevent interface removal остаётся для reboot/assignment
+- **DNStap без пакета** — Apply не вызывает `service dnstap_bgp`, если бинарь/rc.d/`os-dnstap-bgp` отсутствуют
+
+### Added
+- **BGP filter Interface** — выбор ACTIVE_TUN4_IF, ACTIVE_TUN6_IF или WAN (устройство OPNsense WAN)
+- **DNStap PROXY/DIRECT** — списки, файлы и UI: `proxy.txt` / `direct.txt` (бывшие blocked/unblocked); community `community_DNSTAP_PROXY`
+- **DNStap Geodat** — URL `geosite.dat` (hydraponique по умолчанию) и кнопка Category: каждой категории PROXY или DIRECT; назначения в `geodat-categories/<sha1>.txt` на каждый URL; без признака категории не попадают в файлы; cron/Apply учитывают назначения
+- **Domains — Check domain route** — resolv домена, для каждого IP `birdcl show route for <ip> all`; таблица: domain, IP, BGP peer, Instance, интерфейс (`dev` или WAN), Active (`*` в BIRD; если Network not found — N/A / N/A / WAN / да)
+- **DNStap BGP 1.5.x** — третий класс **BLOCK**: `block.txt`, extra, URL, `bgp.block_communities` (`AS:888`); geosite Category PROXY/DIRECT/BLOCK; приоритет block > proxy > direct; установщик ставит `os-dnstap-bgp-latest.pkg` с GitHub `releases/latest` (сейчас **v1.5.1**)
+- **DNStap domain files** — перед стартом создаются пустые `proxy.txt` / `direct.txt` (и extra/URL), если их нет
+- **DNStap URL cron** — каждый день в 04:15 скачиваются списки по URL и выполняется `service dnstap_bgp reload`
+- **DNStap ↔ Unbound** — при старте: `dnstap-enable: yes`, общий сокет (chroot `/var/run/dnstap-bgp/dnstap.sock` = хост `/var/unbound/var/run/dnstap-bgp/dnstap.sock`), `configctl unbound reload`, затем старт dnstap-bgp; при выключении: `dnstap-enable: no` и reload Unbound
+- **Auto route** — cron раз в минуту; реальный SOCKS-опрос раз в **Auto route interval**; состояние в `/var/run/xray_autoroute_state.json`; выбор TUN по среднему latency; Apply цикл опросов не запускает
+- **Routing tab / BGP** — dropdown: BGP peers, BGP filter, BGP community. Peers write peer_NAME.inc; filters `filter_NAME.inc`; communities `community_NAME.inc`. Имена уникальны (UniqueConstraint)
+- **Per-instance IP stack** — checkboxes `IPv4` / `IPv6` (both allowed) control TUN address assignment and xray DNS/routing strategy
+- **Per-instance DNS servers** — field `dns_servers` (comma-separated) written into generated xray config for each instance
+- **BGP peer status** — колонки IPv4/IPv6: imported prefixes по каналам `birdc` и `show route table master4/master6 protocol … count` (dnstap IPv6 больше не обнуляется при Test/обновлении); Status: state/info. Apply на Routing: `birdc configure` (сессии не сбрасываются)
+- **Inbound sniffing** — SOCKS inbound sniffing for single-stack instances (`destOverride`: http, tls, quic; `metadataOnly`: false); dual-stack (IPv4+IPv6) → sniffing disabled
+- **DNStap BGP** — `install.sh` ставит `os-dnstap-bgp` с GitHub Releases; General **Enable DNStap BGP**; вкладка DNStap (ключ/значение из живых конфигов)
+
+### Changed
+- Меню VPN → Xray — пункты всех вкладок по порядку (Instances, BGP peers/filter/community, DNStap, General, Domains, Log)
+- `install.sh` — `pkg update` не вызывается; пауза с напоминанием обновить систему из GUI (System → Firmware → Updates), дальше — любая клавиша; повторная установка без uninstall обновляет пакеты и стартовые скрипты, живые конфиги не трогает; uninstall пакета, которого не было до первой установки, снимает конфиги и автозапуск
+- Вкладка DNStap — табличная вёрстка как BGP peers (ячейки с рамками), Add/Remove справа от поля, TTL → Routing prefix TTL, описания в Help
+- DNStap blocked URL — по умолчанию Re-filter `domains_all.lst` и `https://community.antifilter.download/list/domains.lst`
+- DNStap start — если URL списков заполнены, домены скачиваются до старта демона, в нижний регистр, без дублей, в summarized `proxy.txt` / `direct.txt`
+- DNStap communities — blocked `AS:777`, unblocked `AS:555`, в GUI только просмотр
+- Вкладка Log — **DNStap Log** (`/var/log/dnstap-bgp/dnstap-bgp.log`, syslog-ng + newsyslog), как Bird Log
+- DNStap IPv6 по умолчанию включён (`ipv6 = true`, BIRD peer ipv4+ipv6)
+- DNStap BIRD — community `community_DNSTAP_PROXY` (`AS:777`), фильтры `filter_dnstap_v4` / `filter_dnstap_v6` редистрибьют в ACTIVE_TUN4_IF / ACTIVE_TUN6_IF
+- Вкладка **Domains** — extra blocked/unblocked: одно поле, Add/Remove, лупа со списком; extra убраны с DNStap
+- `install.sh`: os-dnstap-bgp — `releases/latest/download/os-dnstap-bgp-latest.pkg`
+- Смена active TUN и Apply Routing — `birdc configure`, не `service bird restart`. Удалены birdstart/birdstop/birdrestart из actions/API
+- `birdsync` синхронизирует только «жив ли tun2socks», без выбора TUN и без SOCKS
+- Условный старт BIRD: один SOCKS-probe на семейство (не серия Auto route polls на Apply)
+- BGP community GUI uses `ASN:value` lists (e.g. `65444:200, 65444:210`); `.inc` files still store BIRD `define NAME = [ (65444, 200), ... ];`
+- `50-xray`: IPv6 on TUN always assigned from OPNsense Interfaces when configured; IPv4 on TUN still follows instance IPv4 checkbox
+- `xray-service-control.php`: when instance IPv6 is off, routing blocks `::/0` (blackhole) and DNS `queryStrategy` is `UseIPv4`; routing `domainStrategy` is `IPOnDemand` for single-stack (IPv4-only or IPv6-only) and `IPIfNonMatch` for dual-stack; proxy outbound gets `domainStrategy` UseIPv4 / UseIPv6 for single-stack
+- `xray-ifstats.php` / Diagnostics tab: show TUN IPv6, IP stack mode and DNS servers
+- Instance dialog: IP Stack & DNS and Routing are one section (IP Stack & DNS & Routing)
+- `install.sh`: migration step 4.8 adds defaults for existing instances
+- `install.sh`: check for FreeBSD package `bird2`; if missing, run `pkg update` and `pkg install -y bird2`
+- `install.sh`: fill `router id` / BGP `source address` from live WAN IPv4/IPv6 (`route`/`ifconfig`, not only config.xml); seed default BGP peers, filters and communities if none exist
+- Документация и `REPO_BRANCH` установщика — ветка **develop**
+
 ## [3.0.1] - TBD
 ### Added
 - **Enabled field** — добавлено поле 'enable' которое позволяет включить/выключить инстанц из автозапуска/перезагрузки
 - **Multi-instance debug** — добавлена возможность просмотра логов, диагностики, тестирования отдельных инстанцов
 - **Per instance log** — Доступ к логам xray доступен из UI для каждой сущности
+- **TUN IPv6** — скрипт `50-xray` назначает IPv6 на TUN из `ipaddrv6`/`subnetv6` в config.xml OPNsense
+- **xray DNS block** — в генерируемый config.json добавлен блок `dns` с серверами из OPNsense и `queryStrategy: UseIPv4`
 
 ### Changed
 - `general.volt`: Разбит на несколько файлов, а так же небольшие улучшения интерфейса
 - `Instance.xml`: Теперь содержит единое поле outbound_config, а итоговый конфиг генерируется автоматически.
 Это делает конфиг инстанца не чувствительным к изменению версии xray, новым протоколам, методам обфускации.
-- `install.sh`: Рекурсивная установка файлов и скриптов плагина
+- `install.sh`: Рекурсивная установка файлов и скриптов плагина; документация и установка указывают на `ha-harbor-ws/os-xray`, ветка `feature/tun-ipv6-dns-useipv4`
+- `README.md` / `README.ru.md`: обновлены ссылки на репозиторий, ветку разработки и команды установки/удаления
 
 ### Fixed
 - **No startup on reboot** — xray_configure использовал неверный формат для передачи функции запускаемой при bootup

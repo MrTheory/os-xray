@@ -1,0 +1,15 @@
+---
+description: OPNsense-style field help (same as General full help) on every Xray tab and dialog
+alwaysApply: true
+---
+
+# Help UI
+
+Use the same help mechanism as the General tab (`base_form` / `initFormHelpUI`):
+
+- Toggle: `{{ partial('OPNsense/Xray/partials/help_toggle') }}` (подпись «full help» + fa-toggle, **справа** в тулбаре через `margin-left: auto`). Do **not** invent a separate Help button. Do **not** use `id` containing `show_all_help` (the H shortcut would click every copy).
+- Per field: `<a href="#" class="xray-showhelp" id="help_for_<unique>"><i class="fa fa-info-circle"></i></a>` next to the label.
+- Help text: `<div class="hidden" data-for="help_for_<unique>"><small>...</small></div>` under the control (same cell as the input).
+- Dialogs/XML forms: keep `<help>` on fields; `base_dialog` already has full help.
+- New rows added in JS must honor `xrayHelpIsOn()` / `xrayHelpClasses()` so a preset of `sessionStorage.all_help_preset=1` shows help immediately.
+- Sync stays in `xraySyncHelp()` so toggling help on any tab (or General) updates every tab.

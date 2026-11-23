@@ -1,0 +1,3 @@
+#!/bin/sh
+# Stop BIRD early on boot so rc.d does not keep it running before tun2socks is up.
+exec /usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-service-control.php birdhold

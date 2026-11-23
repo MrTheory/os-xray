@@ -1,0 +1,29 @@
+<?xml version="1.0"?>
+<model>
+    <mount>//OPNsense/xray/bgpcommunities</mount>
+    <description>Xray BGP community settings</description>
+    <version>1.0.2</version>
+    <items>
+        <community type="ArrayField">
+            <enabled type="BooleanField">
+                <Default>1</Default>
+            </enabled>
+            <name type="TextField">
+                <Required>Y</Required>
+                <Mask>/^[A-Za-z_][A-Za-z0-9_]*$/</Mask>
+                <ValidationMessage>BIRD define name: letters, digits, underscore; must start with a letter or underscore</ValidationMessage>
+                <Constraints>
+                    <check001>
+                        <type>UniqueConstraint</type>
+                        <ValidationMessage>A BGP community with this name already exists.</ValidationMessage>
+                    </check001>
+                </Constraints>
+            </name>
+            <communities type="TextField">
+                <Required>Y</Required>
+                <Mask>/^\d+:\d+(\s*,\s*\d+:\d+)*$/</Mask>
+                <ValidationMessage>Use ASN:value pairs separated by commas, no trailing comma (e.g. 65444:200, 65444:210)</ValidationMessage>
+            </communities>
+        </community>
+    </items>
+</model>

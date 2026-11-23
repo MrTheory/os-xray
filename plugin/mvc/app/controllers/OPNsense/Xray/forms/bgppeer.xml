@@ -1,0 +1,82 @@
+<form>
+    <field>
+        <type>header</type>
+        <label>BGP Peer</label>
+    </field>
+    <field>
+        <id>peer.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>When enabled, this peer is included in BIRD (bgp.conf). Start/Stop in the table toggles this flag, rewrites includes, then restarts BIRD.</help>
+    </field>
+    <field>
+        <id>peer.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>BIRD protocol name (must be unique). The include file is /usr/local/etc/bird/peer_NAME.inc.</help>
+        <hint>NAME</hint>
+    </field>
+    <field>
+        <id>peer.local_as</id>
+        <label>Local AS</label>
+        <type>text</type>
+        <help>Local autonomous system number (local as).</help>
+    </field>
+    <field>
+        <id>peer.neighbor</id>
+        <label>Neighbor</label>
+        <type>text</type>
+        <help>BGP neighbor IPv4/IPv6 address or hostname. Hostnames are resolved (nslookup); host routes via WAN are added for all A/AAAA. BIRD uses the first resolved address.</help>
+    </field>
+    <field>
+        <id>peer.neighbor_as</id>
+        <label>Neighbor AS</label>
+        <type>text</type>
+        <help>Remote autonomous system number.</help>
+    </field>
+    <field>
+        <id>peer.source_address</id>
+        <label>Source Address</label>
+        <type>text</type>
+        <help>Optional source address for BGP session (typically WAN IPv4). Leave empty to omit the statement.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Address families</label>
+    </field>
+    <field>
+        <id>peer.ipv4</id>
+        <label>IPv4</label>
+        <type>checkbox</type>
+        <help>Enable IPv4 BGP family for this peer.</help>
+    </field>
+    <field>
+        <id>peer.ipv4_import</id>
+        <label>IPv4 Import filter</label>
+        <type>dropdown</type>
+        <help>Select one configured BGP filter. Leave as none to import nothing.</help>
+    </field>
+    <field>
+        <id>peer.ipv6</id>
+        <label>IPv6</label>
+        <type>checkbox</type>
+        <help>Enable IPv6 BGP family for this peer.</help>
+    </field>
+    <field>
+        <id>peer.ipv6_import</id>
+        <label>IPv6 Import filter</label>
+        <type>dropdown</type>
+        <help>Select one configured BGP filter. Leave as none to import nothing.</help>
+    </field>
+    <field>
+        <type>header</type>
+        <label>Session</label>
+    </field>
+    <field>
+        <id>peer.hold_time</id>
+        <label>Hold Time</label>
+        <type>text</type>
+        <help>BGP hold time in seconds.</help>
+        <hint>240</hint>
+    </field>
+</form>

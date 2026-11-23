@@ -1,0 +1,22 @@
+<form>
+    <field>
+        <id>community.enabled</id>
+        <label>Enabled</label>
+        <type>checkbox</type>
+        <help>Include this community define in communities.inc.</help>
+    </field>
+    <field>
+        <id>community.name</id>
+        <label>Name</label>
+        <type>text</type>
+        <help>BIRD define name (must match the include file without .inc), e.g. NAME → /usr/local/etc/bird/NAME.inc.</help>
+        <hint>NAME</hint>
+    </field>
+    <field>
+        <id>community.communities</id>
+        <label>Communities</label>
+        <type>textbox</type>
+        <help>One or more BGP communities as ASN:value, separated by commas. No comma after the last pair. Example: 65444:200, 65444:210000</help>
+        <hint>65432:500</hint>
+    </field>
+</form>

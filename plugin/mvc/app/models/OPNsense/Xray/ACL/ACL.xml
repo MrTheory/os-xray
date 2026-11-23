@@ -1,37 +1,59 @@
 <?xml version="1.0"?>
 <acl>
     <acl_xray_general>
-        <n>Xray: General settings</n>
+        <name>Xray: General settings</name>
         <description>Allow access to Xray general configuration (enable/disable)</description>
         <patterns>
             <pattern>api/xray/general/*</pattern>
         </patterns>
     </acl_xray_general>
     <acl_xray_instance>
-        <n>Xray: Instance settings</n>
+        <name>Xray: Instance settings</name>
         <description>Allow access to Xray connection parameters (server, UUID, Reality keys)</description>
         <patterns>
             <pattern>api/xray/instance/*</pattern>
         </patterns>
     </acl_xray_instance>
+    <acl_xray_bgppeer>
+        <name>Xray: BGP peer settings</name>
+        <description>Allow access to Xray BGP peer configuration</description>
+        <patterns>
+            <pattern>api/xray/bgppeer/*</pattern>
+        </patterns>
+    </acl_xray_bgppeer>
+    <acl_xray_bgpfilter>
+        <name>Xray: BGP filter settings</name>
+        <description>Allow access to Xray BGP filter configuration</description>
+        <patterns>
+            <pattern>api/xray/bgpfilter/*</pattern>
+        </patterns>
+    </acl_xray_bgpfilter>
+    <acl_xray_bgpcommunity>
+        <name>Xray: BGP community settings</name>
+        <description>Allow access to Xray BGP community configuration</description>
+        <patterns>
+            <pattern>api/xray/bgpcommunity/*</pattern>
+        </patterns>
+    </acl_xray_bgpcommunity>
     <acl_xray_service>
-        <n>Xray: Service control</n>
+        <name>Xray: Service control</name>
         <description>Allow access to Xray service control (start, stop, reconfigure, status)</description>
         <patterns>
             <pattern>api/xray/service/*</pattern>
         </patterns>
     </acl_xray_service>
     <acl_xray_import>
-        <n>Xray: Import VLESS link</n>
+        <name>Xray: Import VLESS link</name>
         <description>Allow access to VLESS link parser (import/parse)</description>
         <patterns>
             <pattern>api/xray/import/*</pattern>
         </patterns>
     </acl_xray_import>
     <acl_xray_ui>
-        <n>Xray: Web UI</n>
+        <name>Xray: Web UI</name>
         <description>Allow access to the Xray management page (VPN → Xray)</description>
         <patterns>
+            <pattern>ui/xray</pattern>
             <pattern>ui/xray/*</pattern>
         </patterns>
     </acl_xray_ui>

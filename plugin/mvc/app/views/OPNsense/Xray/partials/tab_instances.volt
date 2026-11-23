@@ -34,10 +34,15 @@
                 <div style="width: 1px; height: 22px; background: #ddd;"></div>
 
                 <button id="btnTestConnect" class="btn btn-xs btn-default"
-                        title="{{ lang._('Test connectivity through all running instances') }}">
-                    <i class="fa fa-plug fa-fw"></i> {{ lang._('Test All') }}
+                        title="{{ lang._('Test SOCKS connectivity of enabled running instances') }}">
+                    <i class="fa fa-plug fa-fw"></i> {{ lang._('Test all IF') }}
+                </button>
+                <button id="btnTestAutoRoute" class="btn btn-xs btn-default"
+                        title="{{ lang._('One-shot Auto route: probe latency and select active tun2socks') }}">
+                    <i class="fa fa-random fa-fw"></i> {{ lang._('Test auto route') }}
                 </button>
                 <span id="testConnectResult" style="font-size: 12px;"></span>
+                {{ partial('OPNsense/Xray/partials/help_toggle') }}
 
             </div>
         </section>
@@ -63,7 +68,10 @@
                             data-formatter="rowtoggle">{{ lang._('Enabled') }}</th>
 
                         <th data-column-id="name"
-                            data-type="string">{{ lang._('Name') }}</th>
+                            data-type="string">
+                            <a href="#" class="xray-showhelp" id="help_for_instances"><i class="fa fa-info-circle"></i></a>
+                            {{ lang._('Name') }}
+                        </th>
 
                         <th data-column-id="server_address"
                             data-type="string">{{ lang._('Server') }}</th>
@@ -76,6 +84,16 @@
                             data-formatter="instanceStatus"
                             data-sortable="false"
                             data-width="10em">{{ lang._('Status') }}</th>
+
+                        <th data-column-id="inst_active_tun_v4"
+                            data-formatter="instanceActiveTunV4"
+                            data-sortable="false"
+                            data-width="8em">{{ lang._('Active TUN v4') }}</th>
+
+                        <th data-column-id="inst_active_tun_v6"
+                            data-formatter="instanceActiveTunV6"
+                            data-sortable="false"
+                            data-width="8em">{{ lang._('Active TUN v6') }}</th>
 
                         <th data-column-id="inst_testresult"
                             data-formatter="instanceTestResult"
@@ -106,6 +124,9 @@
 
             <div id="InstanceChangeMessage" class="alert alert-info" style="display: none;" role="alert">
                 {{ lang._('After saving your changes, please click Apply to activate them.') }}
+            </div>
+            <div class="hidden" data-for="help_for_instances" style="padding: 8px 0 0;">
+                <small class="text-muted">{{ lang._('Each instance runs xray-core and tun2socks. Enable it, then click Apply. Field help is also on the edit dialog (full help).') }}</small>
             </div>
         </section>
     </div>

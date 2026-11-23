@@ -2,837 +2,344 @@
 
 # os-xray
 
-[![Release](https://img.shields.io/github/v/release/MrTheory/os-xray)](https://github.com/MrTheory/os-xray/releases)
-[![License](https://img.shields.io/github/license/MrTheory/os-xray)](https://github.com/MrTheory/os-xray/blob/main/LICENSE)
-[![Downloads](https://img.shields.io/github/downloads/MrTheory/os-xray/total)](https://github.com/MrTheory/os-xray/releases)
+[![Repository](https://img.shields.io/badge/GitHub-ha--harbor--ws%2Fos--xray-blue)](https://github.com/ha-harbor-ws/os-xray)
+[![Branch](https://img.shields.io/badge/branch-develop-green)](https://github.com/ha-harbor-ws/os-xray/tree/develop)
+[![License](https://img.shields.io/github/license/ha-harbor-ws/os-xray)](https://github.com/ha-harbor-ws/os-xray/blob/develop/LICENSE)
 [![OPNsense](https://img.shields.io/badge/OPNsense-25.x%20%2F%2026.x-blue)](https://opnsense.org)
 [![FreeBSD](https://img.shields.io/badge/FreeBSD-14.x%20amd64-red)](https://freebsd.org)
 
-**Xray-core VPN plugin for OPNsense** — v3.0.1
+**Xray-core VPN plugin for OPNsense** — v3.1.x (`develop`)
 
-Xray-core + tun2socks — нативный VPN-клиент для OPNsense с поддержкой селективной маршрутизации. VLESS+Reality через визард или произвольный config.json (любой протокол/транспорт). Обходит DPI-блокировки за счёт маскировки трафика под легитимный TLS.
+Xray-core + tun2socks — нативный VPN-клиент для OPNsense с селективной маршрутизацией, BIRD2/BGP, static-префиксами, DNStap и автовыбором активного TUN.
 
 ---
 
-## Возможности
+## Отличия от «классического» стека и ранних версий плагина
 
-- **Мульти-инстанс** — несколько VPN-подключений одновременно, каждое с отдельным конфигом, портом и TUN-интерфейсом
-- **Per-instance статус** — таблица инстансов показывает статус xray-core и tun2socks для каждого подключения (обновление каждые 5 секунд)
-- **Custom Config** — два режима: Wizard (VLESS+Reality через GUI-поля) или Custom (произвольный config.json для любого протокола и транспорта)
-- **Импорт VLESS-ссылки** прямо в диалоге — кнопка Import внутри окна создания/редактирования инстанса; автоматически определяет wizard или custom режим; для xhttp, ws, grpc, h2, kcp генерирует полный config.json с учётом настроек SOCKS5
-- Полная поддержка параметров VLESS+Reality (UUID, flow, SNI, PublicKey, ShortID, Fingerprint)
-- Управление туннелем через GUI: **VPN → Xray**
-- При установке автоматически определяет и импортирует существующий конфиг xray-core и tun2socks
-- Совместимость с селективной маршрутизацией OPNsense (Firewall Aliases + Rules + Gateway)
-- **Кнопки Start / Stop / Restart** — управление сервисом прямо из GUI без перезагрузки страницы
-- **Кнопка Validate Config** — в footer диалога инстанса, сухой прогон конфига через `xray -test` без остановки сервиса
-- **Кнопка Test Connection** — проверяет, что xray-core реально проксирует трафик
-- **Вкладка Log** — Boot Log и Xray Core Log прямо в GUI
-- **Вкладка Diagnostics** — статистика TUN-интерфейса: IP, MTU, байты, пакеты, uptime процессов, Ping RTT до VPN-сервера; автообновление каждые 30 секунд
-- **Кнопка Copy Debug Info** — собирает diagnostics + логи в модалку для копирования в issue-репорт
-- **Bypass Networks** — настраиваемый список CIDR-сетей для обхода VPN (direct routing)
-- **Watchdog** — автоматический перезапуск при падении xray-core или tun2socks (настраивается)
-- **Автозапуск после ребута** — интерфейс поднимается автоматически, нажимать Apply вручную не нужно
-- ACL-права — доступ к GUI и API только для авторизованных пользователей с ролью `page-vpn-xray`
+По сравнению с ручной связкой xray-core + tun2socks и ранним GUI (только один инстанс / без BGP):
+
+| Область | Что добавлено |
+|---------|----------------|
+| Инстансы | Несколько VPN, per-instance SOCKS/TUN/DNS/IPv4/IPv6/weights |
+| General | Routing strategy, BGP, Auto route, WAN4/WAN6, DNStap, Watchdog |
+| Routing | BGP peers / filters / communities в GUI + `birdc configure` |
+| Static | URL/geoip списки → `routes_static_v{4,6}_apply.inc` (PROXY/DIRECT/BLOCK) |
+| DNStap | Пакет `os-dnstap-bgp`, вкладка Domains/DNStap, Unbound dnstap |
+| Gateways | Автосоздание/repair WAN + instance GW; priority/`defaultgw` по strategy |
+| Auto route | Cron + приоритеты GW (только BLOCK→PROXY→DIRECT) |
+| Host routes | Static routes через WAN на IP peer/server (nslookup для hostname) |
+| Логи | `/var/log/xray-*.log`, bird, dnstap + newsyslog |
+| Install | `uninstall` / **`fulluninstall`** (без удаления unbound и `config.xml`) |
 
 ---
 
 ## Стек
 
 ```
-xray-core (VLESS+Reality)
-    ↓ SOCKS5 (по умолчанию 127.0.0.1:10808, настраивается)
-tun2socks
-    ↓ TUN интерфейс proxytun2socks0
-OPNsense Gateway PROXYTUN_GW
+xray-core (VLESS+Reality / custom outbound)
+    ↓ SOCKS5 (на инстанс)
+tun2socks → TUN (proxytun2socksN)
     ↓
-Firewall Rules (селективная маршрутизация)
+OPNsense Gateways (WAN_GW + instance *_GW)
+BIRD2: BGP + static PROXY/DIRECT/BLOCK → ACTIVE_TUN* / WAN
+Unbound (DNStap) → dnstap-bgp → BIRD communities (PROXY/DIRECT/BLOCK)
+Firewall / policy routing
 ```
 
 ---
 
 ## Системные требования
 
-| Компонент  | Версия                  |
-|------------|-------------------------|
-| OPNsense   | 25.x / 26.x             |
-| FreeBSD    | 14.x amd64              |
-| xray-core  | 24.x+ (рекомендуется)   |
-| tun2socks  | Любая актуальная        |
+| Компонент | Версия |
+|-----------|--------|
+| OPNsense | 25.x / 26.x |
+| FreeBSD | 14.x / 15.x amd64 |
+| xray-core | 24.x+ (рекомендуется) |
+| tun2socks | Актуальный FreeBSD amd64 |
+| bird2 | FreeBSD pkg (ставит install.sh) |
+| unbound | OPNsense / FreeBSD pkg |
+| dnstap-bgp (os-dnstap-bgp) | GitHub pkg (опционально) |
 
 ---
 
-## Установка
+## Установка и удаление
 
-**Вариант 1 — через git clone (рекомендуется)**
+Ветка **`develop`**.
 
 ```sh
 cd /tmp
-git clone https://github.com/MrTheory/os-xray.git
+git clone -b develop https://github.com/ha-harbor-ws/os-xray.git
 cd os-xray
 sh install.sh
 ```
 
-**Вариант 2 — через архив**
+Архив:
 
 ```sh
-fetch -o /tmp/os-xray-v5.tar https://raw.githubusercontent.com/MrTheory/os-xray/refs/heads/main/os-xray-v5.tar
-cd /tmp && tar xf os-xray-v5.tar && cd os-xray-v5
+fetch -o /tmp/os-xray.tar.gz https://github.com/ha-harbor-ws/os-xray/archive/refs/heads/develop.tar.gz
+cd /tmp && tar xf os-xray.tar.gz && cd os-xray-develop
 sh install.sh
 ```
 
-Установщик автоматически:
+Установщик: версия плагина, xray-core/tun2socks, **bird2**, **os-dnstap-bgp**, import старых конфигов, syshooks, newsyslog, repair instance GW, автостарт при Enable Xray.
 
-- Покажет текущую и новую версию плагина и запросит подтверждение
-- Проверит версию xray-core — если ниже 24.x, предложит автоматическое обновление
-- Проверит наличие бинарников xray-core и tun2socks — если их нет, выведет ссылки для скачивания
-- Проверит, не занят ли SOCKS5-порт (10808 по умолчанию) другим процессом
-- Найдёт существующие конфиги и импортирует их в OPNsense (поля в GUI заполнятся сразу)
-- Скопирует все файлы плагина, перезапустит configd, очистит кеши
-- Установит boot-скрипт для автозапуска после ребута
+| Команда | Действие |
+|---------|----------|
+| `sh install.sh` | Установка / обновление |
+| `sh install.sh uninstall` | Плагин; пакеты — только если ставил os-xray (baseline) |
+| `sh install.sh fulluninstall` | Плагин + конфиги BIRD/dnstap + логи + bird2/os-dnstap-bgp/tun2socks/xray-core. **Оставляет unbound и `/conf/config.xml`** |
 
-Проверить установленную версию:
 ```sh
 configctl xray version
 ```
 
 ---
 
-## Настройка в GUI
+## GUI: вкладки (VPN → Xray)
 
-Обнови браузер (`Ctrl+F5`) → **VPN → Xray**
+### Instances
 
-1. Вкладка **Instances** → кнопка **+** (добавить инстанс)
-2. В открывшемся диалоге нажми **Import VLESS link** (сворачиваемая панель вверху) → вставь ссылку → **Parse & Fill**
-   - Для стандартных VLESS+Reality (TCP) ссылок → автоматически заполнит wizard-поля
-   - Для ссылок с другим транспортом (xhttp, ws, grpc, h2, kcp) → автоматически сгенерирует Custom Config JSON (с учётом SOCKS5 Listen/Port из формы)
-3. *(Опционально)* Поле **Bypass Networks** — укажи сети, которые должны идти в обход VPN (по умолчанию: частные сети 10/8, 172.16/12, 192.168/16)
-4. *(Опционально)* **Config Mode** → Custom — для ручной вставки произвольного config.json (любой протокол/транспорт xray-core)
-5. *(Опционально)* Кнопка **Validate Config** в footer диалога — сухой прогон конфига через `xray -test` без остановки сервиса
-6. Нажми **Save**, затем вкладка **General** → установи галку **Enable Xray** (и **Enable Watchdog** по желанию)
-7. Нажми **Apply**
-8. Кнопка **Test Connection** — убедись, что туннель работает (показывает HTTP 200)
-9. В таблице инстансов колонка **Status** показывает xray/tun2socks для каждого подключения
+Таблица инстансов: статус xray/tun2socks, Active TUN v4/v6, Test, Start/Stop.
 
----
+| Параметр | Влияние |
+|----------|---------|
+| **Enabled** | Участвует в start/reconfigure/Auto route |
+| **Name** | Отображение; имя GW (`NAME_GW`) |
+| **Outbound Config (JSON)** | Outbound xray; address сервера → WAN host-route |
+| **SOCKS5 Listen / Port** | Inbound для tun2socks |
+| **TUN Interface** | Устройство tun2socks; должно быть в Assignments |
+| **MTU** | MTU TUN |
+| **IPv4 / IPv6** | DNS/routing в xray; не запрещают выбор TUN для BIRD |
+| **DNS Servers** | DNS в config.json инстанса |
+| **Weight IPv4/IPv6** | Приоритет при выборе ACTIVE_TUN*, если включены галки Weight в General |
+| **Bypass Networks** | CIDR → outbound `direct` |
+| **Log Level** | Лог xray-core |
 
-## Интерфейс и шлюз
+Диалог: Import VLESS, Validate Config. После add/set/del — sync WAN static routes на server IP/hostname.
 
-| Шаг | Путь в GUI | Значение |
-|-----|-----------|----------|
-| Назначить интерфейс | Interfaces → Assignments | + Add: proxytun2socks0 |
-| Включить и настроить | Interfaces → \<имя\> | Enable ✓, IPv4: Static, IP: `10.255.0.1/30` |
-| **Предотвратить удаление** | Interfaces → \<имя\> | **Prevent interface removal ✓** |
-| Создать шлюз | System → Gateways → Add | Gateway IP: `10.255.0.2`, Far Gateway ✓, Monitoring off ✓ |
-
-> **Важно:** галочка **Prevent interface removal** обязательна — без неё OPNsense может удалить интерфейс из конфига при ребуте, если tun2socks ещё не успел его создать.
+**Gateway instance (System → Gateways):** создаются/чинятся при BGP Apply, install repair, ensure.  
+`fargw=1` всегда; **`defaultgw=1` только при Routing strategy = BLOCK→PROXY→DIRECT**, иначе `0`.  
+При PROXY-first (strategy + BGP + Auto route) у WAN снимается Upstream (`defaultgw=0`).  
+При выключении BGP/Auto route, смене strategy на System/DIRECT-first или uninstall WAN снова получает `defaultgw=1`.
 
 ---
 
-## Селективная маршрутизация
+### General
 
-- **Firewall → Aliases** — создай список IP/сетей/доменов для маршрутизации через VPN
-- **Firewall → Rules → LAN** — добавь правило: Source = LAN net, Destination = alias, Gateway = PROXYTUN_GW
+| Параметр | Влияние |
+|----------|---------|
+| **Enable Xray** | Глобальный enable; Apply start/stop |
+| **Enable Watchdog** | Cron: перезапуск упавших процессов → `/var/log/xray-watchdog.log` |
+| **Routing strategy** | Приоритеты OPNsense GW + (для PROXY-first) autoroute priorities. См. ниже |
+| **Enable BGP** | `bird_enable`; старт BIRD только если жив tun2socks и SOCKS OK |
+| **Interface WAN4 / WAN6** | FreeBSD device → `WAN4_IF` / `WAN6_IF`, детект WAN GW для DIRECT |
+| **Enable DNStap BGP** | Unbound dnstap + старт `dnstap-bgp` (если пакет есть) |
+| **Auto route** | Cron: опросы SOCKS, смена `ACTIVE_TUN4/6_IF` |
+| **Instance IPv4/IPv6 Weight** | Учитывать weight инстанса при выборе TUN |
+| **Auto route polls** | Число опросов в цикле (по умолчанию 3) |
+| **Auto route interval** | Минуты между циклами (по умолчанию 10) |
 
-MSS Clamping для Xray не требуется (в отличие от WireGuard).
+**Apply (кнопка внизу):** reconfigure инстансов, gateways ensure, WAN host-routes sync, BIRD peers, static protocols, DNStap. Цикл Auto route с Apply **не** запускается (только cron / кнопка Test auto route).
+
+#### Routing strategy → шлюзы
+
+| Режим | WAN priority | WAN `defaultgw` | Instance priority | Instance `defaultgw` | Auto route → priority 100/201+ |
+|-------|--------------|-----------------|-------------------|----------------------|--------------------------------|
+| **System policy** / **BLOCK→DIRECT→PROXY** | 100 | **1** | 255 | **0** | нет |
+| **BLOCK→PROXY→DIRECT** + BGP + Auto route | 255 | **0** | 255 (active TUN → 100) | **1** | **да** |
+| PROXY-first, но BGP или Auto route **выкл** / uninstall | 100 | **1** | 255 | **0** | нет |
+
+Меньше priority в OPNsense = выше предпочтение.
 
 ---
 
-## Outbound NAT (обязательно!)
+### Routing → BGP peers
 
-Без этого трафик через туннель не будет NATиться и не уйдёт дальше VPN-сервера.
+| Параметр | Влияние |
+|----------|---------|
+| **Enabled** | Include в BIRD; Start/Stop → rewrite + restart BIRD |
+| **Name** | Имя protocol / `peer_NAME.inc` |
+| **Local / Neighbor AS** | BGP AS |
+| **Neighbor** | IP или hostname; host-routes via WAN на все A/AAAA; BIRD — первый resolved IP |
+| **Source Address** | `source address` в peer (часто WAN) |
+| **IPv4/IPv6 + Import** | Семейства и filter |
+| **Hold Time** | Hold time |
 
-**Firewall → NAT → Outbound**
+Peer **`dnstap`** — без WAN host-routes (локальная сессия).
 
-1. Переключи режим на **Hybrid outbound NAT rule generation** (если ещё не переключён)
-2. Добавь правило **+**:
+После add/set/del → `bgpwrite` + sync WAN routes.
 
-| Поле | Значение |
-|------|----------|
-| Interface | PROXYTUN (proxytun2socks0) |
-| TCP/IP Version | IPv4 |
-| Protocol | any |
-| Source address | LAN net |
-| Source port | any |
-| Destination address | any |
-| Destination port | any |
-| Translation / target | Interface address |
+---
 
-> **Почему это нужно:** OPNsense по умолчанию NATит трафик только через WAN. Трафик, уходящий через TUN-интерфейс, не попадает под автоматические правила NAT. Без ручного правила пакеты уйдут с исходным LAN-адресом (например 192.168.1.x) и VPN-сервер их отбросит.
+### Routing → BGP filter / community
+
+Фильтры: community + Interface (`ACTIVE_TUN4/6`, WAN4/WAN6, Null/blackhole).  
+Communities — define для фильтров и DNStap.
+
+**Apply** на Routing: запись includes + `birdc configure` (сессии не рвутся).
+
+---
+
+### Routing → Static
+
+Enable static route → protocol `static_v4` / `static_v6` с includes:
+
+| Класс | Next hop |
+|-------|----------|
+| **PROXY** | `via ACTIVE_TUN4_IF` / `ACTIVE_TUN6_IF` |
+| **DIRECT** | IPv4: `via IPv4_GATEWAY`; IPv6: `via fe80::x%iface` / global / `via "iface"` |
+| **BLOCK** | `blackhole` |
+
+`IPv4_GATEWAY` / `IPv6_GATEWAY` в `wan_if.inc` — **WAN upstream** (не system default через instance TUN при PROXY-first). Перед сборкой apply всегда обновляется `wan_if.inc`.
+
+Источники префиксов: URL-листы и geoip.dat categories (PROXY/DIRECT/BLOCK).
+
+---
+
+### DNStap
+
+Живые ключи `dnstap-bgp.conf`, списки PROXY/DIRECT/BLOCK, community.  
+Apply → запись файлов + SIGHUP. Зависит от **Enable DNStap BGP** и пакета.
+
+---
+
+### Domains
+
+Списки доменов для DNStap (URL / extra). Apply = запись/reload dnstap (dnstapwrite).
+
+---
+
+### Log
+
+| Лог | Файл |
+|-----|------|
+| Boot | `/var/log/xray-boot.log` |
+| Autoroute | `/var/log/xray-autoroute.log` |
+| Xray Core | per-instance / общий |
+| Watchdog | `/var/log/xray-watchdog.log` |
+| Bird | `/var/log/bird/bird.log` + класс syslog |
+| DNStap | `/var/log/dnstap-bgp/dnstap-bgp.log` |
+
+---
+
+### Diagnostics
+
+Статистика TUN, RTT до server, uptime. Copy Debug Info — сводка для issue.
+
+---
+
+## Интерфейс, шлюз, NAT
+
+1. **Interfaces → Assignments** — добавить TUN (`proxytun2socks0` и др.)
+2. Static IP `/30` (напр. `10.255.0.1/30`), **Prevent interface removal**
+3. Gateway far end (`10.255.0.2`), Far Gateway, monitor off — или доверить плагину (ensure/repair)
+4. **Outbound NAT Hybrid** + правило на TUN (LAN → any, translation = Interface address)
+
+Без Outbound NAT трафик с LAN-адресами через TUN отбрасывается.
+
+---
+
+## WAN host-routes (peer / server)
+
+OPNsense **System → Routes** (не BIRD):
+
+- BGP neighbor (кроме dnstap) → `/32`/`/128` via `WAN_GW` / `DefaultGW_IPv6`, descr `os-xray:bgp:NAME`
+- Instance server (vnext address) → `os-xray:inst:UUID`
+- Hostname → nslookup A+AAAA
+
+Когда: add/set/del peer или instance; General Apply (BGP); `configctl xray wanroutes`.
+
+---
+
+## CLI: `configctl xray …`
+
+| Action | Назначение |
+|--------|------------|
+| `start` / `stop` / `restart` / `reconfigure` `[uuid]` | Сервис (все или один инстанс) |
+| `status` `[uuid]` / `statusall` | Статус |
+| `version` | Версия плагина |
+| `validate` `[uuid]` | `xray -test` без применения |
+| `testconnect` `[uuid]` | HTTP через SOCKS |
+| `ifstats` `[uuid]` | Статистика TUN |
+| `delete` `uuid` | Остановка + очистка TUN/файлов |
+| `watchdog` | Проверка процессов (cron) |
+| `ifhealth` | Test IF + возможный reselect ACTIVE_TUN |
+| `birdactivetun` | Планирует выбор TUN (фон) |
+| `birdactivetunstatus` | Статус выбора |
+| `birdautoroute` | Один цикл Auto route |
+| `birdsync` | Синхронизация BIRD с tun2socks |
+| `bgpwrite` / `bgprestart` / `bgpstatus` | Includes / restart / JSON статус пиров |
+| `wanroutes` | Sync host-routes via WAN |
+| `dnstapconf` / `dnstapwrite` / `start` / `stop` / `fetch` / `fetchone` / `geodat` | DNStap |
+| `staticconf` / `staticwrite` / `staticfetch` / `staticfetchone` / `staticgeodat` | Static lists |
+| `domainroute` `host\|ip` | Resolve + показать маршруты BIRD |
+| `log` / `autoroutelog` / `xraylog` / `birdlog` / `dnstaplog` | Хвосты логов |
+| `birdloglevel` `class` | Класс syslog BIRD |
+
+Прямой PHP (отладка):
+
+```sh
+/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-gateways.php repair|ensure
+/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-wan-static-routes.php sync
+/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-wan-static-routes.php lookup HOST
+/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-bird-active-tun.php autoroute
+/usr/local/bin/php /usr/local/opnsense/scripts/Xray/xray-static-conf.php write
+```
+
+---
+
+## Проверка ошибок и диагностика
+
+| Симптом / задача | Что смотреть |
+|------------------|--------------|
+| Инстанс не поднимается | Log → Boot / Xray Core; `configctl xray statusall`; Validate Config |
+| SOCKS/туннель «жив», но нет сети | Outbound NAT на TUN; Gateway Far Gateway; assignment Prefer interface removal |
+| BIRD не стартует | Enable BGP; tun2socks running; SOCKS HTTP 200–399; `configctl xray birdsync` |
+| `unexpected DEVICE` в static v6 | Старый apply с `device` — Static Apply / обновление плагина (`via …`) |
+| `CF_SYM_UNDEFINED` / IPv4_GATEWAY | `cat /usr/local/etc/bird/wan_if.inc`; WAN4; General Apply / Static Apply (сначала пишется wan_if) |
+| DIRECT уходит в PROXY | Strategy PROXY-first + default через TUN; IPv4_GATEWAY берётся с WAN, не с default route через instance |
+| Пир BGP / сервер недоступен «мимо VPN» | `configctl xray wanroutes`; Routes → descr `os-xray:` |
+| Auto route не меняет GW priority | Только при **BLOCK→PROXY→DIRECT**; лог Autoroute |
+| DNStap молчит | Пакет установлен? Enable DNStap BGP? Unbound dnstap.conf; `configctl xray dnstaplog` |
+| После обновления GW `defaultgw` | `php …/xray-gateways.php repair` или reinstall (шаг repair) |
+
+Полезные команды:
+
+```sh
+configctl xray statusall
+configctl xray validate
+configctl xray testconnect
+configctl xray bgpstatus
+birdc show protocols
+birdc show route
+tail -n 100 /var/log/xray-boot.log
+tail -n 100 /var/log/xray-autoroute.log
+tail -n 100 /var/log/bird/bird.log
+grep os-xray /conf/config.xml | head
+```
+
+Copy Debug Info на вкладке Diagnostics — для issue на GitHub.
 
 ---
 
 ## Автозапуск после ребута
 
-После ребута интерфейс `proxytun2socks0` поднимается автоматически — xray и tun2socks стартуют, интерфейс получает IP, firewall rules перезагружаются. Вручную нажимать Apply не нужно.
-
-Работает через два механизма с защитой от двойного запуска (flock):
-- **`xray_configure_do()`** — boot hook (приоритет 10), запускает процессы на раннем этапе загрузки
-- **`/usr/local/etc/rc.syshook.d/start/50-xray`** — финальный скрипт, поднимает интерфейс и применяет routing/firewall когда OPNsense полностью загружен
-
-Лог сохраняется в `/tmp/xray_syshook.log` (дозапись, ротация при превышении 50 KB).
-
----
-
-## Watchdog
-
-При включённом **Enable Watchdog** cron каждую минуту проверяет живость xray-core и tun2socks. При падении любого из процессов — оба перезапускаются автоматически. События пишутся в `/var/log/xray-watchdog.log` (ротация: 3 файла по 100 KB).
-
-Watchdog не перезапускает сервис если он был остановлен вручную через кнопку **Stop** или **Apply** с отключённым Enable.
-
----
-
-## Остановка сервиса
-
-При остановке (`Stop` в GUI или `Apply` с отключённым Enable) плагин:
-1. Останавливает tun2socks — он сам уничтожает TUN-интерфейс при завершении
-2. Останавливает xray-core
-3. Выставляет флаг намеренной остановки — watchdog не будет перезапускать сервис
-
----
-
-## Удаление
-
-```sh
-cd /tmp/os-xray-v5
-sh install.sh uninstall
-```
-
----
-
-## Устранение неполадок
-
-### Пошаговая диагностика
-
-Выполняй команды по порядку. Каждый шаг сужает проблему:
-
-```sh
-# Шаг 1 — Плагин и бинарники
-configctl xray version
-ls -la /usr/local/bin/xray-core /usr/local/tun2socks/tun2socks
-/usr/local/bin/xray-core version          # версия xray-core (должна быть 24.x+)
-
-# Шаг 2 — Статус сервисов
-configctl xray statusall                   # JSON: статус всех инстансов
-ps aux | grep -E 'xray|tun2socks'         # реальные процессы
-
-# Шаг 3 — Валидация конфига
-configctl xray validate                    # сухой прогон без перезапуска
-# или напрямую:
-/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config.json
-
-# Шаг 4 — Сеть
-ifconfig proxytun2socks0                   # TUN-интерфейс: UP + inet адрес?
-netstat -rn | grep proxytun               # запись в таблице маршрутизации?
-curl --socks5 127.0.0.1:10808 -s -o /dev/null -w "%{http_code}" https://1.1.1.1 --max-time 10
-# 200 = туннель работает, 000 = нет связи
-
-# Шаг 5 — Файрвол
-pfctl -sr | grep proxytun                 # правила файрвола для TUN
-pfctl -sn | grep proxytun                 # NAT-правила для TUN
-
-# Шаг 6 — Логи (последние ошибки)
-tail -30 /var/log/xray-core.log
-cat /tmp/xray_syshook.log
-tail -20 /var/log/xray-watchdog.log
-
-# Шаг 7 — Конфиги (v3.0.0: per-instance файлы config-{uuid}.json)
-ls /usr/local/etc/xray-core/config-*.json
-cat /usr/local/etc/xray-core/config-*.json
-ls /usr/local/tun2socks/config-*.yaml
-```
-
----
-
-### Справочник ошибок — все сообщения плагина
-
-#### Ошибки запуска/остановки
-
-| Сообщение | Причина | Решение |
-|---|---|---|
-| `xray-core not found at /usr/local/bin/xray-core` | Бинарник не установлен | Установить xray-core (см. раздел ниже) |
-| `tun2socks not found at /usr/local/tun2socks/tun2socks` | Бинарник не установлен | Установить tun2socks (см. ниже) |
-| `Xray is disabled in config` | Не включён Enable | GUI → General → Enable Xray ✓ → Apply |
-| `Another start is already in progress (lock held)` | Параллельный запуск, lock занят | Подождать 30с. Если не проходит: `rm -f /var/run/xray_start.lock` |
-| `ERROR: Failed to start Xray services` | xray-core или tun2socks упал при старте | Смотри `/var/log/xray-core.log` |
-| `No config found in config.xml` | Поля GUI пустые | Импортировать VLESS-ссылку или заполнить поля → Apply |
-
-#### Ошибки валидации конфига
-
-| Сообщение | Причина | Решение |
-|---|---|---|
-| `ERROR: config validation failed` + вывод xray | Невалидный конфиг xray-core | Смотри вывод xray ниже ошибки |
-| `ERROR: custom_config is empty` | Custom-режим, но textarea пустое | Вставить config.json в поле Custom Config |
-| `ERROR: custom_config is not valid JSON` | Некорректный JSON в custom config | Проверить JSON (запятые, скобки, кавычки) |
-| `ERROR: Cannot create temp file for validation` | /tmp заполнен или проблема прав | `df /tmp` — проверить место на диске |
-| `ERROR: config file not found after write` | Запись не удалась | Проверить права `/usr/local/etc/xray-core/` |
-
-#### Ошибки валидации xray-core (из `xray -test`)
-
-| Вывод xray-core | Причина | Решение |
-|---|---|---|
-| `invalid user id` | Некорректный UUID | Проверить формат: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` |
-| `unknown transport protocol: xhttp` | xray-core < 24.x не знает xhttp | Обновить xray-core до 24.x+ или плагин автоматически нормализует в splithttp |
-| `REALITY only supports TCP, H2, gRPC and DomainSocket` | Неподдерживаемая комбинация транспорт+security | Использовать Custom Config для non-TCP Reality или сменить транспорт/security |
-| `failed to dial` | VPN-сервер недоступен | Проверить адрес и порт: `ping` или `nc -zv host port` |
-| `address already in use` | SOCKS5-порт занят | `sockstat -4l \| grep 10808` — сменить порт в GUI или остановить конфликтующий процесс |
-
-#### Сетевые предупреждения
-
-| Предупреждение | Причина | Влияние |
-|---|---|---|
-| `WARNING: Cannot read lo0 interface` | Проблема интерфейса lo0 (очень редко) | SOCKS5 на 127.0.0.1 может не работать |
-| `WARNING: Failed to add lo0 alias` | Alias уже существует или проблема прав | Обычно безвредно — alias уже настроен |
-
----
-
-### Меню VPN → Xray не появляется
-
-```sh
-# Очистить кеш меню OPNsense
-rm -f /var/lib/php/tmp/opnsense_menu_cache.xml
-# Затем Ctrl+F5 в браузере
-
-# Если не помогло — проверить что файлы плагина на месте:
-ls /usr/local/opnsense/mvc/app/models/OPNsense/Xray/Menu/Menu.xml
-ls /usr/local/opnsense/mvc/app/controllers/OPNsense/Xray/IndexController.php
-```
-
----
-
-### Туннель не поднимается
-
-```sh
-# Запустить вручную для полного вывода:
-/usr/local/opnsense/scripts/Xray/xray-service-control.php start
-
-# Если нет вывода — проверить включён ли сервис:
-configctl xray status
-
-# Если "disabled in config":
-# GUI → General → Enable Xray ✓ → Apply
-
-# Валидация конфига отдельно:
-/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config.json
-```
-
----
-
-### Сервис "stopped" после перезагрузки
-
-Xray стартует автоматически при загрузке, если `General → Enable Xray` включён. Если не стартует:
-
-```sh
-# 1. Проверить лог загрузки
-cat /tmp/xray_syshook.log
-
-# 2. Проверить скрипты загрузки
-ls -la /usr/local/etc/rc.syshook.d/start/50-xray
-ls -la /usr/local/etc/inc/plugins.inc.d/xray.inc
-
-# 3. Проверить флаг намеренной остановки
-ls -la /var/run/xray_stopped.flag
-# Если есть — удалить:
-rm -f /var/run/xray_stopped.flag
-
-# 4. Запустить вручную
-configctl xray start
-```
-
----
-
-### Кнопка Apply / Start / Stop не работает ("No response from configd")
-
-```sh
-# 1. Проверить что configd запущен
-service configd status
-
-# 2. Если не запущен
-service configd start
-
-# 3. Проверить lock-файл
-ls -la /var/run/xray_start.lock
-# Если старше 1 минуты:
-rm -f /var/run/xray_start.lock
-
-# 4. Проверить зависший PHP-процесс
-ps aux | grep xray-service-control
-# Если старше 2 минут:
-kill <PID>
-
-# 5. Перезапустить configd
-service configd restart
-# Подождать 3 секунды, затем попробовать в GUI
-
-# 6. Проверить лог configd
-tail -20 /var/log/system/latest.log
-```
-
----
-
-### Сайты не открываются через VPN
-
-**Симптом:** `curl --socks5` возвращает 200, но браузер/LAN-клиенты не могут открыть сайты через VPN.
-
-**Причина:** Нет Outbound NAT правила для TUN-интерфейса.
-
-```sh
-# Проверить NAT-правила для proxytun:
-pfctl -sn | grep proxytun
-
-# Если пусто — добавить Outbound NAT правило (см. раздел выше)
-```
-
-**Другие причины:**
-```sh
-# DNS не резолвит через туннель?
-# Попробуй напрямую по IP:
-curl --socks5 127.0.0.1:10808 -s https://1.1.1.1 --max-time 10
-
-# Если IP работает, а домен нет — проблема DNS
-# Проверить настройки DNS: GUI → System → General → DNS
-
-# MTU слишком большой? Попробуй уменьшить:
-# GUI → Instance → MTU → 1400 (по умолчанию 1500)
-```
-
----
-
-### Проблемы TUN-интерфейса
-
-```sh
-# Интерфейс не существует
-ifconfig proxytun2socks0
-# "does not exist" → tun2socks не запущен или упал
-
-# Проверить процесс tun2socks
-ps aux | grep tun2socks
-# Если не запущен:
-configctl xray start
-
-# Интерфейс есть, но нет IP
-ifconfig proxytun2socks0
-# Если нет строки "inet" → syshook не назначил IP
-# Назначить вручную:
-ifconfig proxytun2socks0 10.255.0.1/30 up
-
-# Интерфейс UP, но нет трафика (Ibytes/Obytes = 0)
-netstat -ibn | grep proxytun2socks0
-# Проверить маршрутизацию:
-netstat -rn | grep proxytun
-# Если нет записи → шлюз не настроен или нет правил файрвола
-
-# Интерфейс исчезает после ребута
-# GUI → Interfaces → <TUN-интерфейс> → Prevent interface removal ✓
-# Обязательно! Без этого OPNsense удаляет интерфейс при загрузке
-```
-
----
-
-### Проблемы Custom Config
-
-```sh
-# Конфиг не применяется в custom-режиме
-# 1. Проверить что config_mode = custom:
-cat /usr/local/etc/xray-core/config.json | head -5
-
-# 2. Проверить синтаксис JSON:
-echo '<ваш json>' | python3 -m json.tool
-# или:
-configctl xray validate
-
-# 3. Частые ошибки JSON:
-# - Запятая после последнего элемента массива/объекта
-# - Одинарные кавычки вместо двойных
-# - Отсутствие кавычек у ключей
-# - Комментарии (// или /* */) — не допускаются в JSON
-
-# 4. Транспорт xhttp на xray-core < 24.x:
-/usr/local/bin/xray-core version
-# Если версия 1.x — плагин автоматически заменяет xhttp→splithttp
-# Если всё равно не работает — обновить xray-core до 24.x+
-```
-
----
-
-### Проблемы с импортом VLESS-ссылки
-
-```sh
-# Кнопка Import не работает / возвращает ошибку
-# 1. Проверить консоль браузера (F12 → Console) на JS-ошибки
-
-# 2. Ссылка должна начинаться с "vless://"
-# Другие протоколы (vmess://, ss://) не поддерживаются для импорта
-# Используй Custom Config и вставь config.json вручную
-
-# 3. Формат ссылки:
-# vless://UUID@HOST:PORT?params#name
-# Обязательно: UUID, HOST, PORT
-# Опционально: type, security, sni, fp, pbk, sid, flow, path, host и т.д.
-
-# 4. Порт 1-65535, HOST не пустой, UUID не пустой
-
-# 5. После импорта нажми Apply для запуска сервиса!
-```
-
----
-
-### Проблемы подключения VLESS+Reality
-
-```sh
-# "failed to dial" в xray-core.log
-# 1. Сервер доступен?
-nc -zv <server_host> <server_port>
-# или:
-ping <server_host>
-
-# 2. Неправильный порт?
-# Проверить: GUI → Instance → Server Port
-
-# 3. Ошибка Reality handshake в логе:
-tail -50 /var/log/xray-core.log | grep -i reality
-# Частые причины:
-# - Неправильный PublicKey (pbk) — должен соответствовать приватному ключу сервера
-# - Неправильный ShortID (sid) — должен совпадать с конфигом сервера
-# - Неправильный SNI — должен быть в списке разрешённых на сервере
-# - Неправильный fingerprint — попробуй "chrome" (самый совместимый)
-# - Расхождение времени — Reality чувствителен к синхронизации
-#   ntpdate pool.ntp.org    # синхронизировать время
-#   date                     # проверить текущее время
-
-# 4. Сервер блокирует ваш IP?
-# Попробуй с другой сети или проверь логи сервера
-```
-
----
-
-### Проблемы Watchdog
-
-```sh
-# Watchdog не перезапускает после падения
-# 1. Watchdog включён?
-# GUI → General → Enable Watchdog ✓
-
-# 2. Флаг намеренной остановки?
-ls -la /var/run/xray_stopped.flag
-# Если есть — watchdog намеренно игнорирует. Удалить:
-rm -f /var/run/xray_stopped.flag
-
-# 3. Cron запускает watchdog?
-crontab -l | grep xray
-# Должна быть запись xray-watchdog.php
-
-# 4. Лог watchdog
-tail -30 /var/log/xray-watchdog.log
-# "restart FAILED" → смотри xray-core.log для причины
-
-# Watchdog в цикле перезапусков
-# Причина: xray-core или tun2socks падает сразу после старта
-# Сначала исправь причину:
-/usr/local/bin/xray-core -test -c /usr/local/etc/xray-core/config.json
-# Исправь конфиг — после этого watchdog заработает
-```
-
----
-
-### Проблемы версии xray-core
-
-```sh
-# Проверить установленную версию
-/usr/local/bin/xray-core version
-
-# Проблемы версии 1.x:
-# - Транспорт "xhttp" → не поддерживается, используй "splithttp" (плагин нормализует автоматически)
-# - REALITY + splithttp → НЕ поддерживается вообще в 1.x
-# - Отсутствуют некоторые фичи безопасности
-
-# Обновить до последней версии:
-fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip
-cd /tmp && unzip -o xray.zip xray
-# Сначала остановить сервис:
-configctl xray stop
-install -m 0755 /tmp/xray /usr/local/bin/xray-core
-configctl xray start
-/usr/local/bin/xray-core version    # проверить
-```
-
----
-
-### Проблемы производительности
-
-```sh
-# Высокая задержка через туннель
-# 1. Проверить RTT до VPN-сервера
-ping -c 5 <server_host>
-# GUI → вкладка Diagnostics показывает Ping RTT
-
-# 2. Туннель перегружен?
-netstat -ibn | grep proxytun2socks0
-# Сравнить Ibytes/Obytes во времени
-
-# 3. Попробовать уменьшить MTU
-# GUI → Instance → MTU → 1400 (или 1300 для двойной инкапсуляции)
-
-# 4. Проверить нагрузку сервера — сам VPN-сервер может тормозить
-
-# Использование CPU/памяти
-ps aux | grep -E 'xray|tun2socks' | awk '{print $3, $4, $11}'
-# Столбец 1 = %CPU, 2 = %MEM, 3 = процесс
-# xray-core обычно <5% CPU, ~30MB RAM
-# tun2socks обычно <3% CPU, ~15MB RAM
-```
-
----
-
-### Проблемы прав и файлов
-
-```sh
-# Файлы конфигов не доступны для записи
-ls -la /usr/local/etc/xray-core/
-ls -la /usr/local/tun2socks/
-# config.json: -rw-r----- (0640)
-# Директории: drwxr-x--- (0750)
-
-# Исправить права:
-chmod 0640 /usr/local/etc/xray-core/config.json
-chmod 0750 /usr/local/etc/xray-core/
-
-# Бинарник не исполняемый
-chmod 0755 /usr/local/bin/xray-core
-chmod 0755 /usr/local/tun2socks/tun2socks
-
-# PHP-ошибки (GUI не грузится, API возвращает 500)
-tail -30 /var/lib/php/tmp/PHP_errors.log
-
-# configd не может выполнить скрипты
-ls -la /usr/local/opnsense/scripts/Xray/
-# Все .php файлы должны быть исполняемыми (-rwxr-xr-x)
-chmod 0755 /usr/local/opnsense/scripts/Xray/*.php
-service configd restart
-```
-
----
-
-### Зомби-процессы
-
-```sh
-# Несколько процессов xray-core или tun2socks
-ps aux | grep -E 'xray-core|tun2socks' | grep -v grep
-
-# Если больше одного — убить все и перезапустить:
-pkill -f xray-core
-pkill -f tun2socks
-rm -f /var/run/xray_core_*.pid /var/run/tun2socks_*.pid /var/run/xray_start.lock
-sleep 1
-configctl xray start
-
-# PID-файл есть, но процесс мёртв (v3.0.0: PID-файлы per-instance)
-ls /var/run/xray_core_*.pid
-# Проверить каждый PID:
-cat /var/run/xray_core_*.pid
-# Если "No such process" — устаревший PID-файл
-rm -f /var/run/xray_core_*.pid /var/run/tun2socks_*.pid
-configctl xray start
-```
-
----
-
-### Проблемы DNS через VPN
-
-```sh
-# Симптом: IP работают, домены не резолвятся
-
-# 1. Тест DNS через туннель
-curl --socks5 127.0.0.1:10808 -s https://1.1.1.1 --max-time 10    # IP — должен работать
-curl --socks5 127.0.0.1:10808 -s https://google.com --max-time 10  # домен — не работает?
-
-# 2. DNS может утекать мимо туннеля
-# Проверить DNS-серверы:
-cat /etc/resolv.conf
-
-# 3. Направить DNS через туннель:
-# GUI → System → General → DNS Servers
-# Добавить DNS-сервер (например 1.1.1.1) с Gateway = PROXYTUN_GW
-
-# 4. Альтернатива — встроенный DNS xray-core:
-# В Custom Config режиме добавить секцию "dns" в config.json:
-# {"dns": {"servers": ["1.1.1.1", "8.8.8.8"]}}
-```
-
----
-
-### Селективная маршрутизация не работает
-
-```sh
-# Трафик идёт напрямую вместо VPN
-
-# 1. Правила файрвола существуют?
-pfctl -sr | grep PROXYTUN
-# Должны быть правила с gateway = PROXYTUN_GW
-
-# 2. Алиас заполнен?
-pfctl -t <alias_name> -T show
-# Должен содержать IP/сети
-
-# 3. Шлюз доступен?
-netstat -rn | grep proxytun
-# Должен показать gateway 10.255.0.2 через proxytun2socks0
-
-# 4. Шлюз помечен как down?
-# GUI → System → Gateways → Status
-# Если "down" — см. раздел Мониторинг шлюза
-
-# 5. Порядок правил важен! VPN-правило должно быть ВЫШЕ default allow
-# GUI → Firewall → Rules → LAN
-# Перетащить VPN-правило выше "Default allow LAN"
-```
-
----
-
-### Проблемы мониторинга шлюза
-
-```sh
-# Шлюз показывает "down" хотя туннель работает
-
-# dpinger (монитор шлюзов OPNsense) использует ICMP
-# xray-core не отвечает на ICMP → dpinger видит шлюз как "down"
-
-# Решение 1: Отключить мониторинг для этого шлюза
-# GUI → System → Gateways → Edit PROXYTUN_GW
-# Disable Gateway Monitoring ✓
-
-# Решение 2: Указать IP для мониторинга
-# GUI → System → Gateways → Edit PROXYTUN_GW
-# Monitor IP: 1.1.1.1 (или любой IP, отвечающий на ping через VPN)
-# Примечание: может не работать если xray-core отбрасывает ICMP
-```
-
----
-
-### Расположение логов
-
-| Лог | Путь | Содержит | Ротация |
-|---|---|---|---|
-| Xray Core | `/var/log/xray-core.log` | stderr xray-core и tun2socks | 600 KB, 3 файла |
-| Boot | `/tmp/xray_syshook.log` | Автозапуск, IP, firewall reload | 50 KB, в скрипте |
-| Watchdog | `/var/log/xray-watchdog.log` | Обнаружение падений, перезапуски | 100 KB, 3 файла |
-| PHP ошибки | `/var/lib/php/tmp/PHP_errors.log` | Ошибки OPNsense PHP (GUI, API) | Управляется OPNsense |
-| Система | `/var/log/system/latest.log` | Ошибки configd | Управляется OPNsense |
-
----
-
-### Все команды плагина
-
-```sh
-# Управление сервисом
-configctl xray start                  # запустить xray-core + tun2socks
-configctl xray stop                   # остановить оба сервиса
-configctl xray restart                # остановить + запустить
-configctl xray reconfigure            # вызывается кнопкой Apply (stop + start)
-
-# Диагностика
-configctl xray status                 # JSON: статус сервисов
-configctl xray version                # JSON: версия плагина
-configctl xray validate               # сухой прогон валидации конфига
-configctl xray testconnect            # curl-тест через SOCKS5 прокси
-configctl xray ifstats                # JSON: статистика TUN, uptime, RTT
-
-# Логи
-configctl xray log                    # последние 150 строк boot-лога
-configctl xray xraylog                # последние 200 строк лога xray-core
-
-# Прямой запуск скриптов (для отладки)
-/usr/local/opnsense/scripts/Xray/xray-service-control.php start
-/usr/local/opnsense/scripts/Xray/xray-service-control.php status
-/usr/local/opnsense/scripts/Xray/xray-service-control.php validate
-/usr/local/opnsense/scripts/Xray/xray-ifstats.php
-/usr/local/opnsense/scripts/Xray/xray-testconnect.php
-
-# Системные
-ps aux | grep -E 'xray|tun2socks'    # запущенные процессы
-ifconfig proxytun2socks0              # TUN-интерфейс
-netstat -rn | grep proxytun           # таблица маршрутизации
-netstat -ibn | grep proxytun          # статистика трафика интерфейса
-sockstat -4l | grep 10808             # кто использует SOCKS5-порт
-tail -f /var/log/xray-core.log        # мониторинг лога в реальном времени
-```
-
----
-
-### Сброс и переустановка
-
-```sh
-# Полная переустановка без потери конфига OPNsense
-sh install.sh uninstall
-sh install.sh
-
-# Ядерный вариант — очистить всё и начать с нуля
-configctl xray stop
-rm -f /var/run/xray_*.pid /var/run/xray_*.lock /var/run/xray_*.flag
-rm -f /usr/local/etc/xray-core/config.json
-rm -f /usr/local/tun2socks/config.yaml
-sh install.sh uninstall
-sh install.sh
-# Затем заново импортировать VLESS-ссылку и Apply
-```
-
----
-
-## Структура файлов
-
-```
-os-xray/
-├── install.sh
-├── CHANGELOG.md
-└── plugin/
-    ├── +MANIFEST                               ← FreeBSD pkg метаданные
-    ├── etc/
-    │   ├── inc/plugins.inc.d/
-    │   │   └── xray.inc                        ← регистрация сервиса, boot hook, cron watchdog
-    │   ├── newsyslog.conf.d/
-    │   │   └── xray.conf                       ← ротация xray-core.log и xray-watchdog.log
-    │   └── rc.syshook.d/start/
-    │       └── 50-xray                         ← автозапуск после ребута
-    ├── scripts/Xray/
-    │   ├── xray-service-control.php            ← управление xray-core и tun2socks
-    │   ├── xray-watchdog.php                   ← watchdog: проверка и перезапуск процессов
-    │   ├── xray-ifstats.php                    ← статистика TUN-интерфейса для Diagnostics
-    │   └── xray-testconnect.php                ← проверка соединения через SOCKS5
-    ├── service/conf/actions.d/
-    │   └── actions_xray.conf                   ← configd actions
-    └── mvc/app/
-        ├── models/OPNsense/Xray/
-        │   ├── General.xml / General.php       ← модель: enable, watchdog (v1.0.1)
-        │   ├── Instance.xml / Instance.php     ← модель: параметры подключения (v1.0.5)
-        │   ├── ACL/ACL.xml                     ← права доступа (page-vpn-xray)
-        │   └── Menu/Menu.xml                   ← пункт меню VPN → Xray
-        ├── controllers/OPNsense/Xray/
-        │   ├── IndexController.php
-        │   ├── forms/general.xml
-        │   ├── forms/instance.xml
-        │   └── Api/
-        │       ├── GeneralController.php
-        │       ├── InstanceController.php
-        │       ├── ServiceController.php       ← start/stop/restart/status/version/log/validate/diagnostics/testconnect
-        │       └── ImportController.php        ← парсинг VLESS-ссылки
-        └── views/OPNsense/Xray/
-            └── general.volt
-```
+`rc.syshook.d/start`: hold BIRD → старт Xray → birdsync. BIRD поднимается только при живом tun2socks.
 
 ---
 
 ## Если бинарники ещё не установлены
 
-Установщик сам сообщит об отсутствии бинарников. Ниже — команды для ручной установки.
+**xray-core:** [XTLS/Xray-core](https://github.com/XTLS/Xray-core/releases)
 
-**xray-core** — [github.com/XTLS/Xray-core/releases](https://github.com/XTLS/Xray-core/releases)
 ```sh
 fetch -o /tmp/xray.zip https://github.com/XTLS/Xray-core/releases/latest/download/Xray-freebsd-64.zip
 cd /tmp && unzip xray.zip xray
 install -m 0755 /tmp/xray /usr/local/bin/xray-core
 ```
 
-**tun2socks** — [github.com/xjasonlyu/tun2socks/releases](https://github.com/xjasonlyu/tun2socks/releases)
+**tun2socks:** [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks/releases)
+
 ```sh
 fetch -o /tmp/tun2socks.zip https://github.com/xjasonlyu/tun2socks/releases/latest/download/tun2socks-freebsd-amd64.zip
 cd /tmp && unzip tun2socks.zip
@@ -840,35 +347,32 @@ mkdir -p /usr/local/tun2socks
 install -m 0755 /tmp/tun2socks-freebsd-amd64 /usr/local/tun2socks/tun2socks
 ```
 
-> Имя файла tun2socks после распаковки может отличаться в зависимости от версии — проверь командой `ls /tmp/tun2socks*`.
+---
+
+## Структура (кратко)
+
+```
+plugin/
+  scripts/Xray/     — service-control, gateways, wan-static-routes, bird-*, static-*, dnstap-*
+  service/.../actions_xray.conf
+  mvc/.../Xray/     — модели, API, вкладки
+  etc/rc.syshook.d/start/  — 10-hold, 50-xray, 99-bird
+  etc/newsyslog.conf.d/xray.conf
+bird.conf, bird/*.inc, bgp.conf, install.sh
+```
 
 ---
 
 ## Changelog
 
-Полная история изменений — в файле [CHANGELOG.md](CHANGELOG.md).
+Полная история — [CHANGELOG.md](CHANGELOG.md).
 
-| Версия | Что изменилось |
-|--------|---------------|
-| 3.0.1  | Исправления ошибок мульти-инстанцов |
-| 3.0.0  | Мульти-инстанс (ArrayField), per-instance статус в таблице, Import VLESS и Validate Config внутри диалога, custom config использует SOCKS5 из формы, переименование uuid→vless_uuid, миграция в install.sh |
-| 2.0.0  | Custom Config (wizard/custom), Import VLESS с авто-генерацией config.json для любого транспорта, нормализация xhttp↔splithttp, проверка версии xray-core при установке |
-| 1.10.0 | Проверка версии при установке, `configctl xray version`, API version endpoint, Outbound NAT в README |
-| 1.9.3  | Фиксы P1 (implode, socks5_port, validate tempfile, дедупликация), Bypass Networks, Copy Debug Info, Ping RTT, автообновление Diagnostics |
-| 1.9.2  | Фикс fatal error tun2socks при stop, ротация watchdog лога |
-| 1.9.1  | Хотфикс validate: синтаксис xray -test, расширение .json для tempnam |
-| 1.9.0  | Улучшен hint для поля SOCKS5 Listen Address |
-| 1.8.0  | Аудит безопасности: фиксы proc_kill, watchdog stopped flag, validate tempfile |
-| 1.7.0  | Фикс блокировки GUI, фикс ifstats bytes, запуск 50-xray из do_start |
-| 1.6.0  | BUG-5/9, Watchdog E1, Diagnostics E4, Validate Config E5 |
-| 1.5.0  | Ротация лога, кнопки Start/Stop/Restart, вкладка Xray Core Log |
-| 1.4.0  | Аудит безопасности P0-P2, xray-testconnect, flock, stderr в лог |
-| 1.3.0  | Версионирование моделей, `+MANIFEST`, `Changelog.md` |
-| 1.2.0  | Вкладка Log, кнопка Test Connection, интервал статуса 5 с |
-| 1.1.0  | Надёжный install.sh: PHP-парсинг конфигов, check_port, ротация лога |
-| 1.0.1  | Исправлен loglevel, TUN destroy при stop, flock |
-| 1.0.0  | ACL, валидация UUID, санитизация ImportController |
-| 0.9.0  | Первоначальный релиз |
+| Версия | Кратко |
+|--------|--------|
+| 3.1.x develop | Gateways/strategy/defaultgw, WAN host-routes, autoroute prio только PROXY-first, IPv4_GATEWAY с WAN (не TUN), IPv6 DIRECT via, fulluninstall, repair на install |
+| 3.1.0 | BIRD2 GUI, Auto route, DNStap package, conditional BIRD start |
+| 3.0.0 | Мульти-инстанс |
+| 2.x / 1.x | Custom config, watchdog, diagnostics, import VLESS |
 
 ---
 
@@ -878,26 +382,18 @@ BSD 2-Clause License
 
 Copyright (c) 2026 Merkulov Pavel Sergeevich (Меркулов Павел Сергеевич)
 
-Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
-
-1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
-2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
-
-THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED.
-
 ---
 
 ## Автор
 
-Меркулов Павел Сергеевич
-Февраль — Март 2026
+Меркулов Павел Сергеевич  
+Февраль — 2026
 
 ---
 
 ## Благодарности
 
-- [XTLS/Xray-core](https://github.com/XTLS/Xray-core) — Xray-core и протокол VLESS+Reality
-- [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks) — tun2socks
-- [OPNsense](https://opnsense.org) — открытая архитектура плагинов
-- [yukh975](https://github.com/yukh975) - за помощь в тестировании
-- [hohner36](https://github.com/hohner36) - за помощь в тестировании и настройке автоматизации
+- [XTLS/Xray-core](https://github.com/XTLS/Xray-core)
+- [xjasonlyu/tun2socks](https://github.com/xjasonlyu/tun2socks)
+- [OPNsense](https://opnsense.org)
+- [yukh975](https://github.com/yukh975), [hohner36](https://github.com/hohner36) — тестирование

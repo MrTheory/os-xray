@@ -37,16 +37,61 @@ class InstanceController extends ApiMutableModelControllerBase
 
     public function addItemAction()
     {
-        return $this->addBase('instance', 'instance');
+        $result = $this->addBase('instance', 'instance');
+        if (($result['result'] ?? '') !== 'failed') {
+            $this->syncWanRoutes();
+        }
+        return $result;
     }
 
     public function setItemAction($uuid)
     {
-        return $this->setBase('instance', 'instance', $uuid);
+        $result = $this->setBase('instance', 'instance', $uuid);
+        if (($result['result'] ?? '') !== 'failed') {
+            $this->syncWanRoutes();
+        }
+        return $result;
     }
 
     public function delItemAction($uuid)
     {
-        return $this->delBase('instance', $uuid);
+        $uuid = preg_replace('/[^0-9a-fA-F\-]/', '', (string)$uuid);
+        // Config first: waiting on configd/BIRD caused HTTP 504 and delBase never ran,
+        // so the row stayed in the grid.
+        $result = $this->delBase('instance', $uuid);
+        if (($result['result'] ?? '') === 'deleted' && strlen($uuid) >= 36) {
+            $php    = is_executable('/usr/local/bin/php') ? '/usr/local/bin/php' : 'php';
+            $script = '/usr/local/opnsense/scripts/Xray/xray-service-control.php';
+            if (is_file($script)) {
+                exec(
+                    escapeshellarg($php) . ' ' . escapeshellarg($script)
+                    . ' delete ' . escapeshellarg($uuid) . ' >/dev/null 2>&1 &'
+                );
+            }
+            $this->syncWanRoutes();
+        }
+        return $result;
+    }
+
+    private function syncWanRoutes(): void
+    {
+        $script = '/usr/local/opnsense/scripts/Xray/xray-wan-static-routes.php';
+        if (!is_readable($script)) {
+            return;
+        }
+        require_once $script;
+        if (!function_exists('xray_wan_routes_sync_all')) {
+            return;
+        }
+        ob_start();
+        try {
+            xray_wan_routes_sync_all(true);
+        } catch (\Throwable $e) {
+            syslog(LOG_ERR, 'os-xray wan routes: ' . $e->getMessage());
+        }
+        $buf = trim((string)ob_get_clean());
+        if ($buf !== '') {
+            syslog(LOG_INFO, 'os-xray wan routes: ' . $buf);
+        }
     }
 }

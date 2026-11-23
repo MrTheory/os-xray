@@ -58,7 +58,40 @@
     </field>
     <field>
         <type>header</type>
-        <label>Routing</label>
+        <label>IP Stack &amp; DNS &amp; Routing</label>
+    </field>
+    <field>
+        <id>instance.use_ipv4</id>
+        <label>IPv4</label>
+        <type>checkbox</type>
+        <help>Enable IPv4 in this instance xray-core config (DNS queryStrategy, routing). Does not limit which TUN Auto route may pick for BIRD IPv4.</help>
+    </field>
+    <field>
+        <id>instance.use_ipv6</id>
+        <label>IPv6</label>
+        <type>checkbox</type>
+        <help>Enable IPv6 in this instance xray-core config only. Unchecked: ::/0 → blackhole and DNS UseIPv4. Auto route / BIRD may still use this TUN for IPv4 and IPv6.</help>
+    </field>
+    <field>
+        <id>instance.dns_servers</id>
+        <label>DNS Servers</label>
+        <type>text</type>
+        <help>Comma-separated DNS server addresses written into this instance xray-core config.</help>
+        <hint>1.1.1.1,8.8.8.8</hint>
+    </field>
+    <field>
+        <id>instance.weight_ipv4</id>
+        <label>Weight IPv4</label>
+        <type>text</type>
+        <help>IPv4 interface weight for route selection. Values range from 1 to 1000. The higher the weight, the higher the priority of the interface. Default is 1.</help>
+        <hint>1</hint>
+    </field>
+    <field>
+        <id>instance.weight_ipv6</id>
+        <label>Weight IPv6</label>
+        <type>text</type>
+        <help>IPv6 interface weight for route selection. Values range from 1 to 1000. The higher the weight, the higher the priority of the interface. Default is 1.</help>
+        <hint>1</hint>
     </field>
     <field>
         <id>instance.bypass_networks</id>

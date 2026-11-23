@@ -25,6 +25,11 @@
                     <i class="fa fa-clipboard fa-fw"></i> {{ lang._('Copy Debug Info') }}
                 </button>
                 <span id="copyDebugResult" style="font-size: 12px;"></span>
+                <a href="#" class="xray-showhelp" id="help_for_diagnostics"><i class="fa fa-info-circle"></i></a>
+                {{ partial('OPNsense/Xray/partials/help_toggle') }}
+                <div class="hidden" data-for="help_for_diagnostics" style="flex-basis: 100%;">
+                    <small class="text-muted">{{ lang._('Live TUN counters for the selected instance. Copy Debug Info gathers a text snapshot for support.') }}</small>
+                </div>
             </div>
         </section>
     </div>
@@ -46,6 +51,18 @@
                         <tr>
                             <th>{{ lang._('TUN IP') }}</th>
                             <td id="diag_tun_ip">&mdash;</td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('TUN IPv6') }}</th>
+                            <td id="diag_tun_ip6">&mdash;</td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('IP Stack') }}</th>
+                            <td id="diag_ip_stack">&mdash;</td>
+                        </tr>
+                        <tr>
+                            <th>{{ lang._('DNS Servers') }}</th>
+                            <td id="diag_dns_servers">&mdash;</td>
                         </tr>
                         <tr>
                             <th>{{ lang._('MTU') }}</th>
